@@ -1,5 +1,5 @@
 -- ============================================================================
--- Smart Replay Mover v2.4.0
+-- Smart Replay Mover v2.5.0
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
 --
@@ -223,21 +223,29 @@ local GAME_PATTERNS = {
 -- ============================================================================
 -- CUSTOM NAMES (User-defined mappings from GUI)
 -- Format: executable or path > Display Name
+-- Keywords mode: +keyword1 keyword2 > Display Name (all words must match)
+-- Contains mode: *text* > Display Name (partial match in window title)
 -- ============================================================================
 
-local CUSTOM_NAMES = {}
+local CUSTOM_NAMES_EXACT = {}     -- {["process"] = "Folder Name"} for exact matches
+local CUSTOM_NAMES_KEYWORDS = {}  -- {{keywords = {"word1", "word2"}, name = "Folder"}, ...}
+local CUSTOM_NAMES_CONTAINS = {}  -- {{pattern = "text", name = "Folder"}, ...} for *pattern* mode
 
 -- Parse a single custom name entry
 -- Supports formats:
---   "C:\path\to\game.exe > Custom Name"
---   "game.exe > Custom Name"
---   "game > Custom Name"
+--   "C:\path\to\game.exe > Custom Name"  (exact match)
+--   "game.exe > Custom Name"              (exact match)
+--   "game > Custom Name"                  (exact match)
+--   "+keyword1 keyword2 > Custom Name"    (keywords mode - all words must be present)
+--   "*pattern* > Custom Name"             (contains mode - matches if text contains pattern)
+-- Returns: result, name, mode
+--   mode: "exact", "keywords", or "contains"
 local function parse_custom_entry(entry)
-    if not entry or entry == "" then return nil, nil end
+    if not entry or entry == "" then return nil, nil, nil end
 
     -- Split by " > " separator
     local path, name = string.match(entry, "^(.+)%s*>%s*(.+)$")
-    if not path or not name then return nil, nil end
+    if not path or not name then return nil, nil, nil end
 
     -- Trim whitespace
     path = string.gsub(path, "^%s+", "")
@@ -245,20 +253,52 @@ local function parse_custom_entry(entry)
     name = string.gsub(name, "^%s+", "")
     name = string.gsub(name, "%s+$", "")
 
-    if path == "" or name == "" then return nil, nil end
+    if path == "" or name == "" then return nil, nil, nil end
 
-    -- Extract just the executable name from full path
+    -- Check for contains mode (wrapped in *...*)
+    if string.sub(path, 1, 1) == "*" and string.sub(path, -1) == "*" and #path > 2 then
+        local pattern = string.sub(path, 2, -2)  -- Remove * from both ends
+        pattern = string.gsub(pattern, "^%s+", "")  -- Trim leading space
+        pattern = string.gsub(pattern, "%s+$", "")  -- Trim trailing space
+
+        if pattern ~= "" then
+            return string.lower(pattern), name, "contains"
+        else
+            return nil, nil, nil
+        end
+    end
+
+    -- Check for keywords mode (starts with + or ~)
+    if string.sub(path, 1, 1) == "+" or string.sub(path, 1, 1) == "~" then
+        local keywords_str = string.sub(path, 2)  -- Remove +/~ prefix
+        keywords_str = string.gsub(keywords_str, "^%s+", "")  -- Trim leading space
+
+        local keywords = {}
+        for word in string.gmatch(keywords_str, "%S+") do
+            table.insert(keywords, string.lower(word))
+        end
+
+        if #keywords > 0 then
+            return keywords, name, "keywords"
+        else
+            return nil, nil, nil
+        end
+    end
+
+    -- Exact match mode: extract just the executable name from full path
     -- Handle both forward and back slashes
     local exe = string.match(path, "([^/\\]+)$") or path
     -- Remove .exe extension if present
     exe = string.gsub(exe, "%.[eE][xX][eE]$", "")
 
-    return string.lower(exe), name
+    return string.lower(exe), name, "exact"
 end
 
 -- Load custom names from OBS data array
 local function load_custom_names(settings)
-    CUSTOM_NAMES = {}
+    CUSTOM_NAMES_EXACT = {}
+    CUSTOM_NAMES_KEYWORDS = {}
+    CUSTOM_NAMES_CONTAINS = {}
 
     local array = obs.obs_data_get_array(settings, "custom_names")
     if not array then return end
@@ -269,27 +309,85 @@ local function load_custom_names(settings)
         local entry = obs.obs_data_get_string(item, "value")
         obs.obs_data_release(item)
 
-        local exe, name = parse_custom_entry(entry)
-        if exe and name then
-            CUSTOM_NAMES[exe] = name
+        local result, name, mode = parse_custom_entry(entry)
+        if result and name and mode then
+            if mode == "keywords" then
+                -- Keywords mode: result is a table of keywords
+                table.insert(CUSTOM_NAMES_KEYWORDS, {
+                    keywords = result,
+                    name = name
+                })
+            elseif mode == "contains" then
+                -- Contains mode: result is a pattern string
+                table.insert(CUSTOM_NAMES_CONTAINS, {
+                    pattern = result,
+                    name = name
+                })
+            else
+                -- Exact match mode: result is a string (exe name)
+                CUSTOM_NAMES_EXACT[result] = name
+            end
         end
     end
 
     obs.obs_data_array_release(array)
 end
 
--- Check if a process matches any custom name (EXACT MATCH ONLY)
--- This prevents false positives like "obs" matching "roblox"
-local function get_custom_name(process_name)
+-- Check if text contains all keywords (case-insensitive)
+local function matches_keywords(text, keywords)
+    local lower = string.lower(text)
+    for _, keyword in ipairs(keywords) do
+        if not string.find(lower, keyword, 1, true) then
+            return false  -- Missing keyword
+        end
+    end
+    return true  -- All keywords found
+end
+
+-- Check if text contains pattern (case-insensitive)
+local function matches_contains(text, pattern)
+    if not text or not pattern then return false end
+    local lower_text = string.lower(text)
+    return string.find(lower_text, pattern, 1, true) ~= nil
+end
+
+-- Check if a process/window matches any custom name
+-- Supports exact match, keywords mode, and contains mode
+-- window_title is optional - used for contains mode matching
+local function get_custom_name(process_name, window_title)
     if not process_name or process_name == "" then return nil end
 
     local lower = string.lower(process_name)
-    -- Remove .exe if present
-    lower = string.gsub(lower, "%.[eE][xX][eE]$", "")
+    -- Remove .exe if present for exact matching
+    local lower_no_ext = string.gsub(lower, "%.[eE][xX][eE]$", "")
 
-    -- Exact match only - safest approach for user-defined names
-    if CUSTOM_NAMES[lower] then
-        return CUSTOM_NAMES[lower]
+    -- 1. Try exact match first (fast, highest priority)
+    if CUSTOM_NAMES_EXACT[lower_no_ext] then
+        return CUSTOM_NAMES_EXACT[lower_no_ext]
+    end
+
+    -- 2. Try contains matching (checks both process name AND window title)
+    -- This is perfect for games with version numbers in window titles
+    for _, entry in ipairs(CUSTOM_NAMES_CONTAINS) do
+        -- Check process name first
+        if matches_contains(process_name, entry.pattern) then
+            return entry.name
+        end
+        -- Check window title if provided
+        if window_title and matches_contains(window_title, entry.pattern) then
+            return entry.name
+        end
+    end
+
+    -- 3. Try keywords matching (check against original name with spaces/version info)
+    for _, entry in ipairs(CUSTOM_NAMES_KEYWORDS) do
+        if matches_keywords(process_name, entry.keywords) then
+            return entry.name
+        end
+        -- Also check window title for keywords
+        if window_title and matches_keywords(window_title, entry.keywords) then
+            return entry.name
+        end
     end
 
     return nil
@@ -441,13 +539,14 @@ local function is_ignored(name)
     return false
 end
 
-local function get_game_folder(raw_name)
+local function get_game_folder(raw_name, window_title)
     if not raw_name or raw_name == "" then
         return CONFIG.fallback_folder
     end
 
     -- Check custom names first (highest priority)
-    local custom = get_custom_name(raw_name)
+    -- Pass both process name and window title for contains/keywords matching
+    local custom = get_custom_name(raw_name, window_title)
     if custom then
         debug("Custom name match: " .. raw_name .. " -> " .. custom)
         return custom
@@ -563,29 +662,39 @@ local function find_game_in_obs()
     return found
 end
 
+-- Detect active game
+-- Returns: process_or_game_name, window_title (both can be nil)
+-- The window_title is always returned separately for wildcard matching
 local function detect_game()
-    -- Try process name first
     local process = get_active_process()
+    local title = get_window_title()
+
+    -- Always capture window title for wildcard matching (even if process is found)
+    local window_title_for_matching = title
+
+    -- Try process name first
     if process and not is_ignored(process) then
         debug("Detected from process: " .. process)
-        return process
+        if title then
+            debug("Window title available: " .. title)
+        end
+        return process, window_title_for_matching
     end
 
-    -- Try window title
-    local title = get_window_title()
+    -- Try window title as main identifier
     if title and not is_ignored(title) then
         debug("Detected from window: " .. title)
-        return title
+        return title, window_title_for_matching
     end
 
     -- Try OBS game capture source
     local obs_game = find_game_in_obs()
     if obs_game and not is_ignored(obs_game) then
         debug("Detected from OBS: " .. obs_game)
-        return obs_game
+        return obs_game, window_title_for_matching
     end
 
-    return nil
+    return nil, window_title_for_matching
 end
 
 -- ============================================================================
@@ -800,9 +909,9 @@ local function process_file(path)
         return
     end
 
-    -- Detect game
-    local raw_game = detect_game()
-    local folder_name = get_game_folder(raw_game)
+    -- Detect game (now returns both process name and window title)
+    local raw_game, window_title = detect_game()
+    local folder_name = get_game_folder(raw_game, window_title)
 
     if raw_game then
         log("Game: " .. raw_game .. " -> " .. folder_name)
@@ -872,6 +981,23 @@ local function on_recording_file_changed(calldata)
     end
 end
 
+-- Disconnect recording signals
+-- NOTE: This function MUST be defined BEFORE connect_recording_signals()
+-- because connect calls disconnect to clean up any existing handlers first
+local function disconnect_recording_signals()
+    if recording_signal_handler then
+        obs.signal_handler_disconnect(recording_signal_handler, "file_changed", on_recording_file_changed)
+        recording_signal_handler = nil
+    end
+
+    if recording_output_ref then
+        obs.obs_output_release(recording_output_ref)
+        recording_output_ref = nil
+    end
+
+    debug("Disconnected recording signals")
+end
+
 -- Connect to recording output signals
 local function connect_recording_signals()
     -- Disconnect any existing handler first
@@ -899,21 +1025,6 @@ local function connect_recording_signals()
 
     debug("Connected to recording file_changed signal")
     return true
-end
-
--- Disconnect recording signals
-local function disconnect_recording_signals()
-    if recording_signal_handler then
-        obs.signal_handler_disconnect(recording_signal_handler, "file_changed", on_recording_file_changed)
-        recording_signal_handler = nil
-    end
-
-    if recording_output_ref then
-        obs.obs_output_release(recording_output_ref)
-        recording_output_ref = nil
-    end
-
-    debug("Disconnected recording signals")
 end
 
 -- ============================================================================
@@ -1003,9 +1114,9 @@ local function on_event(event)
     elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTING then
         -- Cache current game when recording starts (for file splitting)
         if CONFIG.organize_recordings then
-            local raw_game = detect_game()
+            local raw_game, window_title = detect_game()
             recording_game_name = raw_game
-            recording_folder_name = get_game_folder(raw_game)
+            recording_folder_name = get_game_folder(raw_game, window_title)
             current_recording_file = nil
 
             if raw_game then
@@ -1311,7 +1422,7 @@ function script_description()
     return [[
 <center>
 <p style="font-size:24px; font-weight:bold; color:#00d4aa;">SMART REPLAY MOVER</p>
-<p style="color:#888;">Automatic Game Clip Organizer for OBS v2.4.0</p>
+<p style="color:#888;">Automatic Game Clip Organizer for OBS v2.5.0</p>
 </center>
 
 <hr style="border-color:#333;">
@@ -1382,11 +1493,11 @@ function script_properties()
 
     -- Easy add section - two separate fields
     obs.obs_properties_add_text(custom_group, "custom_names_help",
-        "Add a custom name mapping below:",
+        "Exact: process > Folder | Keywords: +word1 word2 > Folder | Contains: *text* > Folder",
         obs.OBS_TEXT_INFO)
 
     obs.obs_properties_add_text(custom_group, "new_process_name",
-        "🎯  Process name (from Task Manager)",
+        "🎯  Process, +keywords, or *contains*",
         obs.OBS_TEXT_DEFAULT)
 
     obs.obs_properties_add_text(custom_group, "new_folder_name",
@@ -1502,10 +1613,13 @@ function script_update(settings)
     load_custom_names(settings)
 
     -- Debug: show loaded custom names count
-    local count = 0
-    for _ in pairs(CUSTOM_NAMES) do count = count + 1 end
-    if count > 0 then
-        debug("Loaded " .. count .. " custom name mapping(s)")
+    local exact_count = 0
+    for _ in pairs(CUSTOM_NAMES_EXACT) do exact_count = exact_count + 1 end
+    local keywords_count = #CUSTOM_NAMES_KEYWORDS
+    local contains_count = #CUSTOM_NAMES_CONTAINS
+    local total_count = exact_count + keywords_count + contains_count
+    if total_count > 0 then
+        debug("Loaded " .. total_count .. " custom name mapping(s) (" .. exact_count .. " exact, " .. keywords_count .. " keywords, " .. contains_count .. " contains)")
     end
 end
 
@@ -1533,10 +1647,11 @@ function script_load(settings)
     obs.obs_frontend_add_event_callback(on_event)
 
     -- Count custom names for log
-    local custom_count = 0
-    for _ in pairs(CUSTOM_NAMES) do custom_count = custom_count + 1 end
+    local exact_count = 0
+    for _ in pairs(CUSTOM_NAMES_EXACT) do exact_count = exact_count + 1 end
+    local custom_count = exact_count + #CUSTOM_NAMES_KEYWORDS + #CUSTOM_NAMES_CONTAINS
 
-    log("Smart Replay Mover v2.4.0 loaded (GPL v3 - github.com/MrRazzy/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.5.0 loaded (GPL v3 - github.com/MrRazzy/Smart-Replay-Mover)")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
         " | Fallback: " .. CONFIG.fallback_folder)
@@ -1556,7 +1671,7 @@ function script_unload()
 end
 
 -- ============================================================================
--- END OF SCRIPT v2.4.0
+-- END OF SCRIPT v2.5.0
 -- Copyright (C) 2025-2026 MrRazzy - Licensed under GPL v3
 -- https://github.com/MrRazzy/Smart-Replay-Mover
 -- ============================================================================
