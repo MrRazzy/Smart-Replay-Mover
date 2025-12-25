@@ -1,5 +1,5 @@
 -- ============================================================================
--- Smart Replay Mover v2.6.2
+-- Smart Replay Mover v2.6.3
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
 --
@@ -483,6 +483,8 @@ ffi.cdef[[
     typedef int BOOL;
     typedef const char* LPCSTR;
     typedef const unsigned short* LPCWSTR;
+    typedef unsigned short* LPWSTR;
+    typedef unsigned short wchar_t;
     typedef void* HINSTANCE;
     typedef void* HICON;
     typedef void* HCURSOR;
@@ -510,7 +512,7 @@ ffi.cdef[[
     int GetWindowTextA(HWND hWnd, char* lpString, int nMaxCount);
     int GetWindowTextW(HWND hWnd, wchar_t* lpString, int nMaxCount);
 
-    int MultiByteToWideChar(unsigned int CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPCWSTR lpWideCharStr, int cchWideChar);
+    int MultiByteToWideChar(unsigned int CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
     int WideCharToMultiByte(unsigned int CodePage, DWORD dwFlags, const wchar_t* lpWideCharStr, int cchWideChar, char* lpMultiByteStr, int cbMultiByte, const char* lpDefaultChar, int* lpUsedDefaultChar);
     BOOL DeleteFileW(LPCWSTR lpFileName);
 
@@ -600,6 +602,7 @@ ffi.cdef[[
     COLORREF SetTextColor(HDC hdc, COLORREF color);
     BOOL TextOutA(HDC hdc, int x, int y, LPCSTR lpString, int c);
     int DrawTextA(HDC hdc, LPCSTR lpchText, int cchText, RECT* lprc, UINT format);
+    int DrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, RECT* lprc, UINT format);
     HBRUSH CreateSolidBrush(COLORREF color);
     int FillRect(HDC hDC, const RECT* lprc, HBRUSH hbr);
     BOOL GetClientRect(HWND hWnd, RECT* lpRect);
@@ -683,6 +686,24 @@ local CS_VREDRAW = 0x0001
 local COLOR_BG = 0x00252525        -- Dark gray background
 local COLOR_TEXT = 0x00FFFFFF      -- White text
 local COLOR_ACCENT = 0x0000D4AA    -- Green accent (your theme color)
+
+-- UTF-8 to UTF-16 conversion for Unicode support in notifications
+local function utf8_to_wide(str)
+    if not str or str == "" then return nil end
+    if not kernel32 then return nil end
+
+    local ok, result = pcall(function()
+        -- Get required buffer size
+        local size = kernel32.MultiByteToWideChar(CP_UTF8, 0, str, -1, nil, 0)
+        if size == 0 then return nil end
+        -- Allocate buffer and convert (use unsigned short instead of wchar_t)
+        local buf = ffi.new("unsigned short[?]", size)
+        kernel32.MultiByteToWideChar(CP_UTF8, 0, str, -1, buf, size)
+        return buf
+    end)
+
+    return ok and result or nil
+end
 
 -- ============================================================================
 -- NOTIFICATION SYSTEM
@@ -801,9 +822,14 @@ local function draw_notification_to_hdc(hdc, hwnd)
     gdi32.SetBkMode(hdc, TRANSPARENT)
     gdi32.SetTextColor(hdc, COLOR_TEXT)
 
-    -- Draw title
+    -- Draw title (Unicode support for Cyrillic etc.)
     local title_rect = ffi.new("RECT", {12, 10, rect.right - 10, 30})
-    user32.DrawTextA(hdc, notification_title, -1, title_rect, 0)
+    local title_wide = utf8_to_wide(notification_title)
+    if title_wide then
+        user32.DrawTextW(hdc, title_wide, -1, title_rect, 0)
+    else
+        user32.DrawTextA(hdc, notification_title, -1, title_rect, 0)
+    end
 
     -- Message font (smaller)
     local msg_font = gdi32.CreateFontA(
@@ -814,9 +840,14 @@ local function draw_notification_to_hdc(hdc, hwnd)
     gdi32.SelectObject(hdc, msg_font)
     gdi32.SetTextColor(hdc, 0x00BBBBBB)
 
-    -- Draw message
+    -- Draw message (Unicode support for Cyrillic etc.)
     local msg_rect = ffi.new("RECT", {12, 34, rect.right - 10, rect.bottom - 8})
-    user32.DrawTextA(hdc, notification_message, -1, msg_rect, 0)
+    local msg_wide = utf8_to_wide(notification_message)
+    if msg_wide then
+        user32.DrawTextW(hdc, msg_wide, -1, msg_rect, 0)
+    else
+        user32.DrawTextA(hdc, notification_message, -1, msg_rect, 0)
+    end
 
     -- Cleanup
     gdi32.SelectObject(hdc, old_font)
@@ -1251,7 +1282,7 @@ local function get_window_title()
         if not hwnd then return nil end
 
         -- Use wide (Unicode) version for proper international character support
-        local wide_buffer = ffi.new("wchar_t[256]")
+        local wide_buffer = ffi.new("unsigned short[256]")
         local len = user32.GetWindowTextW(hwnd, wide_buffer, 256)
 
         if len > 0 then
@@ -1328,14 +1359,21 @@ end
 
 -- Detect active game
 -- Returns: process_or_game_name, window_title (both can be nil)
--- The window_title is always returned separately for wildcard matching
+-- The window_title is always returned separately for custom names matching (contains/keywords)
 local function detect_game()
     local process = get_active_process()
     local title = get_window_title()
     local window_title_for_matching = title
 
-    -- 1. Try active window process first
-    if process and not is_ignored(process) then
+    -- 1. If process is in ignore list, use fallback folder (don't use window title!)
+    -- This prevents folders like "Путана" (Telegram chat) or "Warhammer" (Explorer folder)
+    if process and is_ignored(process) then
+        dbg("Process ignored, using fallback: " .. process)
+        return nil, window_title_for_matching
+    end
+
+    -- 2. Try active window process
+    if process then
         dbg("Detected from active process: " .. process)
         if title then
             dbg("Window title available: " .. title)
@@ -1343,19 +1381,15 @@ local function detect_game()
         return process, window_title_for_matching
     end
 
-    -- 2. Try window title as identifier
-    if title and not is_ignored(title) then
-        dbg("Detected from window title: " .. title)
-        return title, window_title_for_matching
-    end
-
-    -- 3. Try OBS game capture source (fallback - works when "Capture specific window" mode)
+    -- 3. Try OBS game capture source
     local obs_game = find_game_in_obs()
     if obs_game and not is_ignored(obs_game) then
         dbg("Detected from OBS Game Capture: " .. obs_game)
         return obs_game, window_title_for_matching
     end
 
+    -- 4. Nothing detected - use fallback folder
+    dbg("No game detected, will use fallback folder")
     return nil, window_title_for_matching
 end
 
@@ -1772,7 +1806,14 @@ local function on_event(event)
         if CONFIG.organize_screenshots then
             local path = obs.obs_frontend_get_last_screenshot()
             if path then
+                -- Detect game for notification before processing
+                local raw_game, window_title = detect_game()
+                local folder_name = get_game_folder(raw_game, window_title)
+
                 process_file(path)
+
+                -- Show notification
+                notify("Screenshot Saved", "Moved to: " .. folder_name)
             end
         end
 
@@ -2102,7 +2143,7 @@ function script_description()
     return [[
 <center>
 <p style="font-size:24px; font-weight:bold; color:#00d4aa;">SMART REPLAY MOVER</p>
-<p style="color:#888;">Automatic Game Clip Organizer for OBS v2.6.2</p>
+<p style="color:#888;">Automatic Game Clip Organizer for OBS v2.6.3</p>
 </center>
 
 <hr style="border-color:#333;">
@@ -2200,14 +2241,19 @@ function script_properties()
         nil)
 
     -- Import/Export section
+    local default_path = get_default_export_path()
+    obs.obs_properties_add_text(custom_group, "export_path_info",
+        "📁  Default path: " .. default_path,
+        obs.OBS_TEXT_INFO)
+
     obs.obs_properties_add_path(custom_group, "import_export_path",
-        "📄  Import/Export file path",
+        "📄  Custom file path (optional)",
         obs.OBS_PATH_FILE_SAVE,
         "Text files (*.txt)",
         nil)
 
     obs.obs_properties_add_button(custom_group, "import_btn",
-        "📥  Import custom names", on_import_clicked)
+        "📥  Import (uses default if empty)", on_import_clicked)
 
     obs.obs_properties_add_button(custom_group, "export_btn",
         "📤  Export custom names", on_export_clicked)
@@ -2368,7 +2414,7 @@ function script_load(settings)
     for _ in pairs(CUSTOM_NAMES_EXACT) do exact_count = exact_count + 1 end
     local custom_count = exact_count + #CUSTOM_NAMES_KEYWORDS + #CUSTOM_NAMES_CONTAINS
 
-    log("Smart Replay Mover v2.6.2 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.6.3 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
         " | Fallback: " .. CONFIG.fallback_folder)
@@ -2391,7 +2437,7 @@ function script_unload()
 end
 
 -- ============================================================================
--- END OF SCRIPT v2.6.2
+-- END OF SCRIPT v2.6.3
 -- Copyright (C) 2025-2026 SlonickLab - Licensed under GPL v3
 -- https://github.com/SlonickLab/Smart-Replay-Mover
 -- ============================================================================
