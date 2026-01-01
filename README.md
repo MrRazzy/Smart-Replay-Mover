@@ -178,7 +178,7 @@
 
   ## 📋 Changelog
 
-  ### v2.6.2 (Latest)
+  ### v2.6.2
   - 🔔 **Notification System** — Visual popups + sound notifications
   - 🎯 **Contains Matching** — New `*pattern*` mode for flexible matching
   - 🐛 **Fixed** white background flash on popup
