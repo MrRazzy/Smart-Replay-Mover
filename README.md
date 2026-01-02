@@ -155,9 +155,11 @@
   3. Rename to `notification_sound.wav`
   4. Place in the same folder as the script:
 
+  ```
   📁 Your Folder/
   ├── Smart Replay Mover.lua
   └── notification_sound.wav
+  ```
 
   5. Reload the script — done!
 
@@ -167,6 +169,7 @@
 
   The script creates this folder structure automatically:
 
+  ```
   📁 Videos/
   ├── 📁 Counter-Strike 2/
   │   ├── CS2 - 2025-06-15 14-30-01.mp4
@@ -180,6 +183,7 @@
   │
   └── 📁 Desktop/
       └── Desktop - 2025-06-17 09-00-00.mp4
+  ```
 
   ---
 
