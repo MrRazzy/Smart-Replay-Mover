@@ -6,7 +6,7 @@
 
   **Automatically organize your Replay Buffer clips, Recordings, and Screenshots into game-specific folders.**
 
-  [![Version](https://img.shields.io/badge/version-2.6.3-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
+  [![Version](https://img.shields.io/badge/version-2.6.4-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
   [![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)](LICENSE)
   [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)]()
   [![OBS](https://img.shields.io/badge/OBS-28.x+-302E31.svg)](https://obsproject.com/)
@@ -111,6 +111,13 @@
   | Play sound | Audio notification (works in Fullscreen) |
   | Duration | How long popup stays visible (1-10 seconds) |
 
+  ### 💾 Backup
+  | Setting | Description |
+  |---------|-------------|
+  | File path | Optional custom path for import/export |
+  | Import | Load custom names from file |
+  | Export | Save custom names to file |
+
   ---
 
   ## 🎮 Custom Names
@@ -178,20 +185,32 @@
 
   ## 📋 Changelog
 
+  ### v2.6.4
+  - 🛡️ **Fixed crashes** with anti-cheat games (Marvel Rivals, Valorant, Fortnite)
+  - 🎨 **Redesigned UI** — Cleaner Custom Names section
+  - 💾 **New BACKUP section** — Import/Export moved to dedicated group
+  - 🔧 **Improved stability** — Better error handling for all operations
+
+  ### v2.6.3
+  - 🐛 **Fixed** Telegram/Explorer creating wrong folders from window titles
+  - 📸 **Added** screenshot save notifications
+  - 🔤 **Added** Unicode/Cyrillic support in popups
+  - 📁 **Added** export path visibility in UI
+
+  <details>
+  <summary>View older versions</summary>
+
   ### v2.6.2
   - 🔔 **Notification System** — Visual popups + sound notifications
   - 🎯 **Contains Matching** — New `*pattern*` mode for flexible matching
   - 🐛 **Fixed** white background flash on popup
-  - 🛡️  **Expanded** ignore list to 80+ programs
+  - 🛡️ **Expanded** ignore list to 80+ programs
   - 📥 **Improved** import/export functionality
 
   ### v2.4.0
   - 🎬 Full recording support (Start/Stop)
   - ✂️ File splitting support for long recordings
   - 🔧 Stability improvements
-
-  <details>
-  <summary>View older versions</summary>
 
   ### v2.0.0
   - 🎮 Custom names system with GUI
