@@ -6,7 +6,7 @@
 
   **Automatically organize your Replay Buffer clips, Recordings, and Screenshots into game-specific folders.**
 
-  [![Version](https://img.shields.io/badge/version-2.6.4-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
+  [![Version](https://img.shields.io/badge/version-2.7.0-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
   [![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)](LICENSE)
   [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)]()
   [![OBS](https://img.shields.io/badge/OBS-28.x+-302E31.svg)](https://obsproject.com/)
@@ -39,9 +39,10 @@
 
   ### 🎯 Intelligent Game Detection
   - **Windows API Detection** — Checks what Windows is focusing on, not just OBS
-  - **80+ Pre-configured Games** — CS2, Valorant, Dota 2, Elden Ring, and more
+  - **1800+ Built-in Games** — Massive embedded database, no external files needed
   - **Auto-Pattern Matching** — `minecraft_1.20.exe` → Saves to `Minecraft`
-  - **99.9% Accuracy** — Smart fallback system ensures correct detection
+  - **Anti-Cheat Compatible** — Window title fallback for protected games
+  - **99.9% Accuracy** — Smart fallback chain ensures correct detection
 
   ### 🔔 Notification System
   - **Visual Popup** — ShadowPlay-style dark popup with smooth animations
@@ -59,7 +60,7 @@
   - **Anti-Spam Protection** — Deletes duplicate files from panic-pressing hotkeys
   - **Case-Insensitive** — Won't create duplicate folders with different cases
   - **Date Subfolders** — Optional monthly organization (2025-06/)
-  - **80+ Ignored Programs** — Won't confuse Discord, Chrome, or utilities with games
+  - **230+ Ignored Programs** — Won't confuse Discord, Chrome, launchers or utilities with games
 
   ---
 
@@ -214,19 +215,19 @@
 
   ## 📋 Changelog
 
-  ### v2.6.4
-  - 🎮 **Window Title Fallback** — Games with anti-cheat (Sea of Thieves, etc.) now detected via window title
-  - 🛡️ **Smarter Detection** — Better distinction between ignored apps (Explorer, Discord) and anti-cheat blocked games
+  ### v2.7.0
+  - 📦 **All-In-One Package** — Single file with embedded database (no external dependencies!)
+  - 🎮 **1800+ Games Database** — Massive built-in game library (~1876 games)
+  - 🛡️ **230+ Ignored Programs** — Expanded filter list for launchers, utilities, and system apps
+  - 🎨 **Polished UI** — Beautiful emoji icons throughout the interface
+  - ⚡ **Instant Loading** — No lazy-loading delays, database ready immediately
+  - 🔧 **Cleaner Code** — Optimized and consolidated codebase
   - 🐛 **Fixed** Explorer folders with game names no longer confused with actual games
-  - 🎨 **Redesigned UI** — Cleaner Custom Names section
-  - 💾 **New BACKUP section** — Import/Export moved to dedicated group
-  - 🔧 **Improved stability** — Better error handling for all operations
-
+  
   ### v2.6.3
   - 🐛 **Fixed** Telegram/Explorer creating wrong folders from window titles
   - 📸 **Added** screenshot save notifications
   - 🔤 **Added** Unicode/Cyrillic support in popups
-  - 📁 **Added** export path visibility in UI
 
   <details>
   <summary>View older versions</summary>
