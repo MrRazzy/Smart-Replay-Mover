@@ -2633,6 +2633,10 @@ end
 
 local last_save_time = 0
 local last_screenshot_time = 0
+local last_screenshot_notify_time = 0
+local cache_raw_game = nil
+local cache_folder_name = nil
+local last_detection_time = 0
 local last_recording_time = 0  -- Separate cooldown for recordings
 local files_moved = 0
 local files_skipped = 0
@@ -4301,26 +4305,40 @@ local function on_event(event)
 
         elseif event == obs.OBS_FRONTEND_EVENT_SCREENSHOT_TAKEN then
             if CONFIG.organize_screenshots then
-                local now = os.time()
-                local diff = now - last_screenshot_time
-
-                if diff < CONFIG.duplicate_cooldown then
-                    dbg("Screenshot spam detected, skipping organization")
-                    return
-                end
-
-                last_screenshot_time = now
-
+                local now = os.clock()
                 local path = obs.obs_frontend_get_last_screenshot()
+
                 if path then
-                    local raw_game, window_title, skip_fallback = detect_game()
-                    local folder_name = get_game_folder(raw_game, window_title, skip_fallback)
+                    local raw_game, folder_name
+
+                    -- Cache detection for 2 seconds to handle bursts
+                    if now - last_detection_time < 2.0 and cache_folder_name then
+                        raw_game = cache_raw_game
+                        folder_name = cache_folder_name
+                        dbg("Using detection cache for rapid screenshot burst")
+                    else
+                        local r, w, s = detect_game()
+                        folder_name = get_game_folder(r, w, s)
+                        raw_game = r
+
+                        -- Update cache
+                        cache_raw_game = r
+                        cache_folder_name = folder_name
+                        last_detection_time = now
+                    end
 
                     process_file_with_game(path, folder_name, raw_game)
 
-                    notify("Screenshot Saved", "Moved to: " .. folder_name)
+                    -- Throttle notifications (0.5s) to prevent UI overload
+                    if now - last_screenshot_notify_time > 0.5 then
+                        notify("Screenshot Saved", "Moved to: " .. folder_name)
+                        last_screenshot_notify_time = now
+                    end
+
+                    last_screenshot_time = now
                 end
             end
+
 
         elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTING then
             if CONFIG.organize_recordings then
