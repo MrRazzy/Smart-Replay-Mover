@@ -223,6 +223,29 @@
 
   ---
 
+  ## 🎞️ Video Thumbnails (FFmpeg)
+
+  Enhance your clip library by embedding high-quality cover art into your videos. This allows Windows Explorer (and tools like [Icaros](https://www.majorgeeks.com/files/details/icaros.html)) to display a frame from your gameplay as the file icon instead of a generic media player logo.
+
+  ### 📥 1. Download FFmpeg
+  1. Go to [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) (recommended Windows builds).
+  2. Download the `ffmpeg-release-essentials.zip`.
+  3. Extract it to a permanent folder (e.g., `C:\Program Files\ffmpeg`).
+
+  ### ⚙️ 2. Configuration in OBS
+  1. Open OBS Studio → **Tools** → **Scripts**.
+  2. Select **Smart Replay Mover**.
+  3. Go to the **🎥 Advanced (FFmpeg)** section.
+  4. Enable **"Enable Thumbnails"**.
+  5. Click **Browse** for **FFmpeg Path** and select the `ffmpeg.exe` file (located inside the `bin` folder of your extraction).
+
+  ### ✨ Benefits
+  - **Silent & Invisible** — FFmpeg runs completely in the background without popups.
+  - **No Quality Loss** — Metadata is embedded without re-encoding your video.
+  - **Universal Compatibility** — Works with both MKV (attachments) and MP4 (tags).
+
+  ---
+
   ## 📋 Changelog
 
   ### v2.7.2
