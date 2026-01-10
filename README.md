@@ -227,7 +227,7 @@
 
   ## 🎞️ Video Thumbnails (FFmpeg)
 
-  Enhance your clip library by embedding high-quality cover art into your videos. This allows Windows Explorer (and tools like [Icaros](https://www.majorgeeks.com/files/details/icaros.html)) to display a frame from your gameplay as the file icon instead of a generic media player logo.
+  Enhance your clip library by embedding high-quality cover art into your videos. This allows Windows Explorer (and tools like [Icaros](https://www.videohelp.com/software/Icaros)) to display a frame from your gameplay as the file icon instead of a generic media player logo.
 
   ### 📥 1. Download FFmpeg
   1. Go to [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) (recommended Windows builds).
