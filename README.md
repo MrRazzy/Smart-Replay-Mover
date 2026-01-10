@@ -11,7 +11,9 @@
   [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)]()
   [![OBS](https://img.shields.io/badge/OBS-28.x+-302E31.svg)](https://obsproject.com/)
 
-  [Features](#-features) • [Installation](#-installation) • [Configuration](#%EF%B8%8F-configuration) • [Custom Names](#-custom-names) • [Changelog](#-changelog)
+  [Features](#-features) • [Installation](#-installation) • [Configuration](#%EF%B8%8F-configuration) • [Custom Names](#-custom-names)
+  <br>
+  [FFmpeg Setup](#%EF%B8%8F-video-thumbnails-ffmpeg) • [Troubleshooting](#-troubleshooting) • [Changelog](#-changelog)
 
   ---
 
