@@ -227,7 +227,7 @@
 
   ### v2.7.2
   - **🖼️ Video Thumbnails** — Added FFmpeg support for embedding cover art into replays
-  - **🥷 Background Processing** — FFmpeg operations are completely silent and invisible
+  - **🤫 Background Processing** — FFmpeg operations are completely silent and invisible
   - **🛠️ Stability & Performance** — Fixed crashes during rapid screenshots in Fullscreen mode
   - **🛡️ Enhanced Logic** — Integrated `IsWindow` validation and cooldowns for thread safety
   - **📂 Safe File Handling** — Files are verified before original is removed
