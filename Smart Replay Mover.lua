@@ -2995,12 +2995,6 @@ local function destroy_orphaned_notifications()
                 break
             end
         end
-     pcall(function()
-        if notification_bg_brush ~= nil then
-            gdi32.DeleteObject(notification_bg_brush)
-            notification_bg_brush = nil
-        end
-    end)
     end)
 end
 
@@ -3896,6 +3890,7 @@ ffi.cdef[[
     int ShellExecuteExA(SHELLEXECUTEINFOA* pExecInfo);
     DWORD WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds);
     int CloseHandle(HANDLE hObject);
+    BOOL TerminateProcess(HANDLE hProcess, UINT uExitCode);
 ]]
 
 local shell32 = ffi.load("shell32")
@@ -3952,7 +3947,13 @@ local function run_task_sync_hidden(commands, unique_id)
     if shell32.ShellExecuteExA(sei) ~= 0 then
         -- Wait for finish (Blocking)
         if sei.hProcess ~= nil then
-            kernel32.WaitForSingleObject(sei.hProcess, INFINITE)
+            -- Safety: INFINITE wait required for large video files (embedding can take minutes)
+            -- Warning: This will block OBS UI during the operation.
+            local res = kernel32.WaitForSingleObject(sei.hProcess, 0xFFFFFFFF)
+            if res == 0x00000102 then -- WAIT_TIMEOUT
+                log("ERROR: FFmpeg process timed out! Terminating...")
+                kernel32.TerminateProcess(sei.hProcess, 1)
+            end
             kernel32.CloseHandle(sei.hProcess)
         end
         
@@ -4725,56 +4726,72 @@ Optional date subfolders
 end
 
 local function parse_update_result()
+    -- This function is called by a timer after check_for_updates initiates a download.
+    -- It reads the downloaded file from the temp directory.
+
     local file = io.open(GITHUB_VERSION_FILE, "r")
     if not file then
+        -- This can happen if the download failed completely or was blocked,
+        -- resulting in no output file.
         update_status_msg = "❌ Check failed: No response"
         obs.timer_remove(parse_update_result)
-        log("Update check file not found.")
+        print("[Smart Replay ERROR] Update file not found!")
+        if script_settings then obs.obs_data_set_string(script_settings, "check_updates_status", update_status_msg) end
         return
     end
 
     local content = file:read("*a")
     file:close()
+    
+    -- The temporary file should be cleaned up immediately after reading.
     os.remove(GITHUB_VERSION_FILE)
 
-    if not content or content == "" then
-        update_status_msg = "❌ Check failed: Server error"
-    else
-        if content:match("404: Not Found") then
+    -- Robustness check: A valid script file must start with "-- Smart Replay Mover".
+    -- This prevents parsing HTML error pages or other invalid data.
+    if not content or not content:match("^-- Smart Replay Mover") then
+        if content and content:match("404: Not Found") then
             update_status_msg = "❌ Check failed: File Not Found (404)"
         else
-            local latest_version = content:match("Smart Replay Mover v?(%d+%.%d+%.?[%d]*)")
-            if not latest_version then latest_version = content:match("v(%d+%.%d+%.%d+)") end
+            update_status_msg = "❌ Check failed: Invalid response"
+        end
+    else
+        -- Try to find the version number in the downloaded script content.
+        local latest_version = content:match("Smart Replay Mover v?(%d+%.%d+%.?[%d]*)")
+        if not latest_version then latest_version = content:match("v(%d+%.%d+%.%d+)") end
+        
+        if latest_version then
+            -- (Version check logic follows)
+            latest_version = latest_version:gsub("^%s*(.-)%s*$", "%1")
             
-            if latest_version then
-                latest_version = latest_version:gsub("^%s*(.-)%s*$", "%1")
-                
-                -- Helper to compare x.y.z versions
-                local function is_newer(new, old)
-                    local new_m, new_n, new_p = new:match("(%d+)%.(%d+)%.?(%d*)")
-                    local old_m, old_n, old_p = old:match("(%d+)%.(%d+)%.?(%d*)")
-                    new_m, new_n, new_p = tonumber(new_m or 0), tonumber(new_n or 0), tonumber(new_p or 0)
-                    old_m, old_n, old_p = tonumber(old_m or 0), tonumber(old_n or 0), tonumber(old_p or 0)
-                    if new_m > old_m then return true end
-                    if new_m < old_m then return false end
-                    if new_n > old_n then return true end
-                    if new_n < old_n then return false end
-                    return new_p > old_p
-                end
-
-                if latest_version == VERSION then
-                    update_status_msg = "✅ You are up to date (v" .. VERSION .. ")"
-                elseif is_newer(latest_version, VERSION) then
-                    update_status_msg = "🎁 New update: v" .. latest_version .. "!"
-                else
-                    update_status_msg = "✅ Running test version (v" .. VERSION .. ")"
-                end
-            else
-                update_status_msg = "❌ Check failed: Invalid data"
+            -- Compare the latest version from GitHub with the current script version.
+            local function is_newer(new, old)
+                local new_m, new_n, new_p = new:match("(%d+)%.(%d+)%.?(%d*)")
+                local old_m, old_n, old_p = old:match("(%d+)%.(%d+)%.?(%d*)")
+                new_m, new_n, new_p = tonumber(new_m or 0), tonumber(new_n or 0), tonumber(new_p or 0)
+                old_m, old_n, old_p = tonumber(old_m or 0), tonumber(old_n or 0), tonumber(old_p or 0)
+                if new_m > old_m then return true end
+                if new_m < old_m then return false end
+                if new_n > old_n then return true end
+                if new_n < old_n then return false end
+                return new_p > old_p
             end
+
+            if latest_version == VERSION then
+                update_status_msg = "✅ You are up to date (v" .. VERSION .. ")"
+            elseif is_newer(latest_version, VERSION) then
+                update_status_msg = "🎁 New update: v" .. latest_version .. "!"
+            else
+                -- This case handles when the local version is newer than the one on GitHub,
+                -- which can happen during development or testing.
+                update_status_msg = "✅ Running test version (v" .. VERSION .. ")"
+            end
+        else
+            -- This happens if the downloaded file is the script but has a malformed version string.
+            update_status_msg = "❌ Check failed: Cannot parse version"
         end
     end
 
+    -- Stop the timer and update the status in the UI.
     obs.timer_remove(parse_update_result)
     
     if script_settings then
@@ -4782,25 +4799,57 @@ local function parse_update_result()
     end
     
     log("Update Check Result: " .. update_status_msg)
+
+    -- Toggle the hidden boolean property to trigger the modified callback,
+    -- which returns true and forces a UI refresh.
+    if script_settings then
+        obs.obs_data_set_bool(script_settings, "__ui_refresh_trigger", not obs.obs_data_get_bool(script_settings, "__ui_refresh_trigger"))
+    end
 end
 
+-- This callback does nothing but return true, which is a signal to OBS
+-- to refresh the script properties UI. We trigger this from our async
+-- update check to show the final result without requiring a second click.
+local update_check_in_progress = false
+local button_text = "                  🔄  Check for Updates                  "
+
 local function check_for_updates(props, p)
-    update_status_msg = "⏳ Checking GitHub..."
-    
-    -- Silent execution via Windows API
-    -- We use WinExec with SW_HIDE (0) to run curl without a CMD window.
-    if kernel32 then
-        -- Removed -f to capture error body for diagnostics
-        local cmd = string.format('cmd.exe /c curl -s -m 5 "%s" > "%s"', GITHUB_RAW_URL, GITHUB_VERSION_FILE)
-        kernel32.WinExec(cmd, 0) -- 0 = SW_HIDE
-        
-        -- Start a timer to read the file after it's saved (2.5s delay)
-        obs.timer_add(parse_update_result, 2500)
-    else
-        update_status_msg = "❌ Error: kernel32 missing"
+	if update_check_in_progress then
+		-- If a check is running, a second click should just refresh the UI.
+		-- This will show the final result from the completed check.
+		update_check_in_progress = false
+		button_text = "                  🔄  Check for Updates                  "
+		return true
+	end
+
+	-- Start a new check
+	update_check_in_progress = true
+	button_text = "           ⏳ Checking... (Click again in 5s)           "
+	update_status_msg = "⏳ Connecting to GitHub..." -- Show status immediately
+
+    -- Force UI refresh by toggling a dummy setting
+    if script_settings then
+        local dummy = obs.obs_data_get_bool(script_settings, "__ui_refresh_trigger")
+        obs.obs_data_set_bool(script_settings, "__ui_refresh_trigger", not dummy)
     end
 
-    return true -- Refresh UI to show "Checking..."
+	if kernel32 then
+		if obs.os_file_exists(GITHUB_VERSION_FILE) then
+			os.remove(GITHUB_VERSION_FILE)
+		end
+		math.randomseed(os.time())
+		local cache_buster = "?t=" .. tostring(os.time()) .. tostring(math.random(1000, 9999))
+		local url_to_fetch = GITHUB_RAW_URL .. cache_buster
+		local cmd = string.format('powershell -Command "Invoke-WebRequest -Uri \'%s\' -OutFile \'%s\'"', url_to_fetch, GITHUB_VERSION_FILE)
+		kernel32.WinExec(cmd, 0)
+		obs.timer_add(parse_update_result, 4000) -- Increased to 4s
+	else
+		update_status_msg = "❌ Error: kernel32 missing"
+		update_check_in_progress = false
+		button_text = "                  🔄  Check for Updates                  "
+	end
+
+	return true -- Force UI refresh to show the "Checking..." text on the button
 end
 
 function script_properties()
@@ -4808,147 +4857,70 @@ function script_properties()
 
     -- FILE NAMING GROUP
     local naming_group = obs.obs_properties_create()
-
-    obs.obs_properties_add_bool(naming_group, "add_game_prefix",
-        "✏️  Add game name prefix to filename")
-
-    obs.obs_properties_add_text(naming_group, "fallback_folder",
-        "📂  Fallback folder name",
-        obs.OBS_TEXT_DEFAULT)
-
-    obs.obs_properties_add_group(props, "naming_section",
-        "📁  FILE NAMING", obs.OBS_GROUP_NORMAL, naming_group)
+    obs.obs_properties_add_bool(naming_group, "add_game_prefix", "✏️  Add game name prefix to filename")
+    obs.obs_properties_add_text(naming_group, "fallback_folder", "📂  Fallback folder name", obs.OBS_TEXT_DEFAULT)
+    obs.obs_properties_add_group(props, "naming_section", "📁  FILE NAMING", obs.OBS_GROUP_NORMAL, naming_group)
 
     -- CUSTOM NAMES GROUP
     local custom_group = obs.obs_properties_create()
-
-    obs.obs_properties_add_text(custom_group, "custom_names_help",
-        "Custom names have HIGHEST priority! Format: game > Folder | +keywords > Folder | *text* > Folder",
-        obs.OBS_TEXT_INFO)
-
-    obs.obs_properties_add_text(custom_group, "new_process_name",
-        "🎯  Game (process, +keywords, or *text*)",
-        obs.OBS_TEXT_DEFAULT)
-
-    obs.obs_properties_add_text(custom_group, "new_folder_name",
-        "📁  Folder name",
-        obs.OBS_TEXT_DEFAULT)
-
-    obs.obs_properties_add_button(custom_group, "add_mapping_btn",
-        "➕  Add", add_custom_mapping)
-
-    obs.obs_properties_add_editable_list(custom_group, "custom_names",
-        "Your mappings",
-        obs.OBS_EDITABLE_LIST_TYPE_STRINGS,
-        nil,
-        nil)
-
-    obs.obs_properties_add_group(props, "custom_section",
-        "🎮  CUSTOM NAMES (Highest Priority)", obs.OBS_GROUP_NORMAL, custom_group)
+    obs.obs_properties_add_text(custom_group, "custom_names_help", "Custom names have HIGHEST priority! Format: game > Folder | +keywords > Folder | *text* > Folder", obs.OBS_TEXT_INFO)
+    obs.obs_properties_add_text(custom_group, "new_process_name", "🎯  Game (process, +keywords, or *text*)", obs.OBS_TEXT_DEFAULT)
+    obs.obs_properties_add_text(custom_group, "new_folder_name", "📁  Folder name", obs.OBS_TEXT_DEFAULT)
+    obs.obs_properties_add_button(custom_group, "add_mapping_btn", "➕  Add", add_custom_mapping)
+    obs.obs_properties_add_editable_list(custom_group, "custom_names", "Your mappings", obs.OBS_EDITABLE_LIST_TYPE_STRINGS, nil, nil)
+    obs.obs_properties_add_group(props, "custom_section", "🎮  CUSTOM NAMES (Highest Priority)", obs.OBS_GROUP_NORMAL, custom_group)
 
     -- BACKUP GROUP
     local backup_group = obs.obs_properties_create()
-
-    obs.obs_properties_add_path(backup_group, "import_export_path",
-        "📄  File path (optional)",
-        obs.OBS_PATH_FILE_SAVE,
-        "Text files (*.txt)",
-        nil)
-
-    obs.obs_properties_add_button(backup_group, "import_btn",
-        "📥  Import", on_import_clicked)
-
-    obs.obs_properties_add_button(backup_group, "export_btn",
-        "📤  Export", on_export_clicked)
-
-    obs.obs_properties_add_group(props, "backup_section",
-        "💾  BACKUP", obs.OBS_GROUP_NORMAL, backup_group)
+    obs.obs_properties_add_path(backup_group, "import_export_path", "📄  File path (optional)", obs.OBS_PATH_FILE_SAVE, "Text files (*.txt)", nil)
+    obs.obs_properties_add_button(backup_group, "import_btn", "📥  Import", on_import_clicked)
+    obs.obs_properties_add_button(backup_group, "export_btn", "📤  Export", on_export_clicked)
+    obs.obs_properties_add_group(props, "backup_section", "💾  BACKUP", obs.OBS_GROUP_NORMAL, backup_group)
 
     -- ORGANIZATION GROUP
     local folder_group = obs.obs_properties_create()
-
-    obs.obs_properties_add_bool(folder_group, "use_date_subfolders",
-        "📅  Create monthly subfolders (YYYY-MM)")
-
-    obs.obs_properties_add_bool(folder_group, "organize_screenshots",
-        "📸  Also organize screenshots")
-
-    obs.obs_properties_add_bool(folder_group, "organize_recordings",
-        "🎬  Organize recordings (Start/Stop Recording)")
-
-    obs.obs_properties_add_group(props, "folder_section",
-        "🗂️  ORGANIZATION", obs.OBS_GROUP_NORMAL, folder_group)
+    obs.obs_properties_add_bool(folder_group, "use_date_subfolders", "📅  Create monthly subfolders (YYYY-MM)")
+    obs.obs_properties_add_bool(folder_group, "organize_screenshots", "📸  Also organize screenshots")
+    obs.obs_properties_add_bool(folder_group, "organize_recordings", "🎬  Organize recordings (Start/Stop Recording)")
+    obs.obs_properties_add_group(props, "folder_section", "🗂️  ORGANIZATION", obs.OBS_GROUP_NORMAL, folder_group)
 
     -- SPAM PROTECTION GROUP
     local spam_group = obs.obs_properties_create()
-
-    obs.obs_properties_add_float_slider(spam_group, "duplicate_cooldown",
-        "⏱️  Cooldown between saves (seconds)",
-        0, 30, 0.5)
-
-    obs.obs_properties_add_bool(spam_group, "delete_spam_files",
-        "🗑️  Auto-delete duplicate files")
-
-    obs.obs_properties_add_group(props, "spam_section",
-        "🛡️  SPAM PROTECTION", obs.OBS_GROUP_NORMAL, spam_group)
+    obs.obs_properties_add_float_slider(spam_group, "duplicate_cooldown", "⏱️  Cooldown between saves (seconds)", 0, 30, 0.5)
+    obs.obs_properties_add_bool(spam_group, "delete_spam_files", "🗑️  Auto-delete duplicate files")
+    obs.obs_properties_add_group(props, "spam_section", "🛡️  SPAM PROTECTION", obs.OBS_GROUP_NORMAL, spam_group)
 
     -- NOTIFICATIONS GROUP
     local notify_group = obs.obs_properties_create()
-
-    obs.obs_properties_add_text(notify_group, "notify_help",
-        "Visual popup works only in Borderless Windowed games!",
-        obs.OBS_TEXT_INFO)
-
-    obs.obs_properties_add_bool(notify_group, "show_notifications",
-        "🖼️  Show visual popup (Borderless Windowed only)")
-
-    obs.obs_properties_add_bool(notify_group, "play_sound",
-        "🔊  Play notification sound (works in Fullscreen too)")
-
-    obs.obs_properties_add_float_slider(notify_group, "notification_duration",
-        "⏱️  Popup duration (seconds)",
-        1.0, 10.0, 0.5)
-
-    obs.obs_properties_add_group(props, "notify_section",
-        "🔔  NOTIFICATIONS", obs.OBS_GROUP_NORMAL, notify_group)
+    obs.obs_properties_add_text(notify_group, "notify_help", "Visual popup works only in Borderless Windowed games!", obs.OBS_TEXT_INFO)
+    obs.obs_properties_add_bool(notify_group, "show_notifications", "🖼️  Show visual popup (Borderless Windowed only)")
+    obs.obs_properties_add_bool(notify_group, "play_sound", "🔊  Play notification sound (works in Fullscreen too)")
+    obs.obs_properties_add_float_slider(notify_group, "notification_duration", "⏱️  Popup duration (seconds)", 1.0, 10.0, 0.5)
+    obs.obs_properties_add_group(props, "notify_section", "🔔  NOTIFICATIONS", obs.OBS_GROUP_NORMAL, notify_group)
 
     -- TOOLS GROUP
     local tools_group = obs.obs_properties_create()
-
-    obs.obs_properties_add_bool(tools_group, "debug_mode",
-        "🐛  Show debug messages in console")
-
-    obs.obs_properties_add_group(props, "tools_section",
-        "🔧  TOOLS & DEBUG", obs.OBS_GROUP_NORMAL, tools_group)
+    obs.obs_properties_add_bool(tools_group, "debug_mode", "🐛  Show debug messages in console")
+    obs.obs_properties_add_group(props, "tools_section", "🔧  TOOLS & DEBUG", obs.OBS_GROUP_NORMAL, tools_group)
 
     -- FFMPEG GROUP (Advanced)
     local ffmpeg_group = obs.obs_properties_create()
+    obs.obs_properties_add_bool(ffmpeg_group, "enable_thumbnails", "🖼️  Embed Video Dictionary (Thumbnail)")
+    obs.obs_properties_add_float_slider(ffmpeg_group, "thumbnail_offset", "⏱️  Thumbnail Offset (seconds from end)", 1.0, 60.0, 1.0)
+    obs.obs_properties_add_path(ffmpeg_group, "ffmpeg_path", "📂  FFmpeg Executable Path (ffmpeg.exe)", obs.OBS_PATH_FILE, "Executables (*.exe);;All Files (*.*)", nil)
+    obs.obs_properties_add_text(ffmpeg_group, "ffmpeg_info", "Note: Requires FFmpeg installed. Adds processing time regarding disk speed.", obs.OBS_TEXT_INFO)
+    obs.obs_properties_add_group(props, "ffmpeg_section", "🎬  FFMPEG THUMBNAILS (Advanced)", obs.OBS_GROUP_NORMAL, ffmpeg_group)
 
-    obs.obs_properties_add_bool(ffmpeg_group, "enable_thumbnails",
-        "🖼️  Embed Video Dictionary (Thumbnail)")
-
-    local p_offset = obs.obs_properties_add_float_slider(ffmpeg_group, "thumbnail_offset",
-        "⏱️  Thumbnail Offset (seconds from end)",
-        1.0, 60.0, 1.0)
+    -- UPDATE CHECKER (Stable Layout)
+    local update_button_group = obs.obs_properties_create()
+    obs.obs_properties_add_button(update_button_group, "check_updates_btn", button_text, check_for_updates)
+    obs.obs_properties_add_group(props, "update_button_section", "", obs.OBS_GROUP_NORMAL, update_button_group)
     
-    obs.obs_properties_add_path(ffmpeg_group, "ffmpeg_path",
-        "📂  FFmpeg Executable Path (ffmpeg.exe)",
-        obs.OBS_PATH_FILE, "Executables (*.exe);;All Files (*.*)", nil)
-
-    local p_info = obs.obs_properties_add_text(ffmpeg_group, "ffmpeg_info",
-        "Note: Requires FFmpeg installed. Adds processing time regarding disk speed.",
-        obs.OBS_TEXT_INFO)
-
-    obs.obs_properties_add_group(props, "ffmpeg_section",
-        "🎬  FFMPEG THUMBNAILS (Advanced)", obs.OBS_GROUP_NORMAL, ffmpeg_group)
-
-    -- UPDATE CHECKER
-    obs.obs_properties_add_button(props, "check_updates_btn",
-        "🔄  Check for Updates", check_for_updates)
-    
-    obs.obs_properties_add_text(props, "check_updates_status",
-        update_status_msg,
-        obs.OBS_TEXT_INFO)
+    if update_status_msg and update_status_msg ~= "" then
+        local status_group = obs.obs_properties_create()
+        obs.obs_properties_add_text(status_group, "check_updates_status", update_status_msg, obs.OBS_TEXT_INFO)
+        obs.obs_properties_add_group(props, "update_status_section", "", obs.OBS_GROUP_NORMAL, status_group)
+    end
 
     return props
 end
