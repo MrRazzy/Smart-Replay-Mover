@@ -251,6 +251,7 @@
   ## 📋 Changelog
   
   ### v2.7.4
+  - **🔄 Update Checker** — Added a "Check for Updates" button to quickly see if a new version is out
   - **❄️ Freeze Fix** — Implemented window reuse to prevent OBS hangs during high-stress events
   - **⚙️ CPU Optimization** — Redraw throttling ensures notifications only render once per state
   - **🎬 Recording Stability** — Added 0.5s safety delay during recording start initialization
