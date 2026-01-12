@@ -6,7 +6,7 @@
 
   **Automatically organize your Replay Buffer clips, Recordings, and Screenshots into game-specific folders.**
 
-  [![Version](https://img.shields.io/badge/version-2.7.2-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
+  [![Version](https://img.shields.io/badge/version-2.7.4-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
   [![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)](LICENSE)
   [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)]()
   [![OBS](https://img.shields.io/badge/OBS-28.x+-302E31.svg)](https://obsproject.com/)
@@ -227,7 +227,7 @@
 
   ## 🎞️ Video Thumbnails (FFmpeg)
 
-  Enhance your clip library by embedding high-quality cover art into your videos. This allows Windows Explorer (and tools like [Icaros](https://www.videohelp.com/software/Icaros)) to display a frame from your gameplay as the file icon instead of a generic media player logo.
+  Enhance your clip library by embedding high-quality cover art into your videos. This allows Windows Explorer (and tools like [Icaros](https://www.majorgeeks.com/files/details/icaros.html)) to display a frame from your gameplay as the file icon instead of a generic media player logo.
 
   ### 📥 1. Download FFmpeg
   1. Go to [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) (recommended Windows builds).
@@ -249,7 +249,19 @@
   ---
 
   ## 📋 Changelog
-
+  
+  ### v2.7.4
+  - **❄️ Freeze Fix** — Implemented window reuse to prevent OBS hangs during high-stress events
+  - **⚙️ CPU Optimization** — Redraw throttling ensures notifications only render once per state
+  - **🎬 Recording Stability** — Added 0.5s safety delay during recording start initialization
+  - **📸 Screenshot Cache** — Added detection cache & throttle to handle rapid photo bursts
+  - **🧹 Memory Leak Fix** — Fixed background brush leaks during script reloads
+  - **📦 Cleanup** — Added missing timer disposal on script unload to prevent log errors
+  
+  ### v2.7.3 (Pull Request by zxsleebu)
+  - **🛡️ Critical Crash Fix** — Fixed the `lua51.dll` crash by switching to native `DefWindowProcA`
+  - **🎨 Safe Rendering** — New timer-based drawing system for thread safety
+  
   ### v2.7.2
   - **🖼️ Video Thumbnails** — Added FFmpeg support for embedding cover art into replays
   - **🤫 Background Processing** — FFmpeg operations are completely silent and invisible
