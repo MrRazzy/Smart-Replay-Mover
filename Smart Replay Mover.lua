@@ -1,5 +1,5 @@
 -- ============================================================================
--- Smart Replay Mover v2.7.3
+-- Smart Replay Mover v2.7.4
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
 --
@@ -30,8 +30,19 @@
 -- Plagiarism or removal of this notice violates the license terms.
 --
 -- ============================================================================
--- CHANGELOG v2.7.3:
---   - Fix crashes while displaying notifications
+-- CHANGELOG v2.7.4:
+--   - Critical: Fixed OBS freeze by implementing Notification Window Reuse
+--   - Optimized redraw throttling (CPU efficiency)
+--   - Added 0.5s safety delay for recording start initialization
+--   - Added screenshot detection cache & throttle for burst captures
+--   - Fixed GDI memory leak in window class background brush
+--   - Removed obsolete CALLBACK_ANCHOR cleanup logic
+--
+-- CHANGELOG v2.7.3 (Pull Request by zxsleebu):
+--   - Critical stability fix for Notification System (lua51.dll crash)
+--   - Replaced Lua WNDPROC with native DefWindowProcA
+--   - Manual render-on-timer logic implemented
+--   - Added window validation (IsWindow) checks
 --
 -- CHANGELOG v2.7.2:
 --   - Added FFmpeg Thumbnail support (embeds cover art into videos)
@@ -2659,9 +2670,9 @@ local new_folder_name = ""
 
 -- Notification system state
 local notification_hwnd = nil           -- Current notification window handle
-local notification_class_registered = false
-local notification_font = nil           -- Text font
 local notification_hinstance = nil      -- Module instance
+local notification_bg_brush = nil       -- Persistent background brush
+local notification_font = nil           -- Text font
 
 -- ============================================================================
 -- LOGGING (defined early for use in notification system)
@@ -2934,18 +2945,14 @@ local NOTIFICATION_CLASS_NAME = "SmartReplayNotificationClass"
 local notification_wndproc = nil
 local notification_class_atom = nil
 
--- Fix 1: Prevent FFI callback garbage collection
-local CALLBACK_ANCHOR = {}
-
--- Fix 2: Prevent race condition during window destruction
 local notification_destroying = false
 
--- Fix 4: Use flag instead of timer_remove inside callback
 local notification_timer_should_stop = false
 
--- Fix 5: Cache fonts to prevent GDI resource exhaustion
-local cached_title_font = nil
-local cached_msg_font = nil
+-- GDI Objects for rendering
+local notification_bg_brush = nil       -- Global background brush
+local cached_title_font = nil           -- Cached font for title
+local cached_msg_font = nil             -- Cached font for message
 
 -- Check if app is in exclusive fullscreen mode
 local function is_exclusive_fullscreen()
@@ -2966,25 +2973,28 @@ end
 -- Find and destroy any orphaned notification windows
 local function destroy_orphaned_notifications()
     pcall(function()
+        -- Only target OUR specific window class to avoid instability
         for i = 1, 10 do
-            local orphan = user32.FindWindowA(NOTIFICATION_CLASS_NAME, NOTIFICATION_WINDOW_TITLE)
+            local orphan = user32.FindWindowA(NOTIFICATION_CLASS_NAME, nil)
             if orphan == nil or orphan == ffi.cast("HWND", 0) then
                 break
             end
-            user32.ShowWindow(orphan, SW_HIDE)
-            user32.DestroyWindow(orphan)
-            dbg("Destroyed orphaned notification window (custom class)")
-        end
-
-        for i = 1, 10 do
-            local orphan = user32.FindWindowA("Static", NOTIFICATION_WINDOW_TITLE)
-            if orphan == nil or orphan == ffi.cast("HWND", 0) then
+            
+            -- If it's NOT our current handle, kill it
+            if orphan ~= notification_hwnd then
+                user32.ShowWindow(orphan, SW_HIDE)
+                user32.DestroyWindow(orphan)
+                dbg("Destroyed orphaned notification window")
+            else
                 break
             end
-            user32.ShowWindow(orphan, SW_HIDE)
-            user32.DestroyWindow(orphan)
-            dbg("Destroyed orphaned notification window (Static class)")
         end
+     pcall(function()
+        if notification_bg_brush ~= nil then
+            gdi32.DeleteObject(notification_bg_brush)
+            notification_bg_brush = nil
+        end
+    end)
     end)
 end
 
@@ -3004,15 +3014,12 @@ local function hide_notification()
     pcall(function()
         if user32.IsWindow(hwnd) then
             user32.ShowWindow(hwnd, SW_HIDE)
-            user32.DestroyWindow(hwnd)
+            -- NOTE: We no longer DestroyWindow here to allow reuse
         end
     end)
 
-    notification_hwnd = nil
     notification_destroying = false
-
-    dbg("Notification hidden")
-    destroy_orphaned_notifications()
+    dbg("Notification hidden (kept for reuse)")
 end
 
 -- Ensure fonts are created (cached)
@@ -3095,40 +3102,21 @@ end
 local function draw_notification_content()
     if notification_hwnd == nil then return end
 
-    pcall(function()
-        local hdc = user32.GetDC(notification_hwnd)
-        if hdc == nil then return end
-        draw_notification_to_hdc(hdc, notification_hwnd)
-        user32.ReleaseDC(notification_hwnd, hdc)
-    end)
-end
-
--- Window procedure handler
-local function notification_wndproc_handler(hwnd, msg, wparam, lparam)
-    local ok, result = pcall(function()
-        if msg == WM_PAINT then
-            local ps = ffi.new("PAINTSTRUCT")
-            local hdc = user32.BeginPaint(hwnd, ps)
-            if hdc ~= nil then
-                pcall(draw_notification_to_hdc, hdc, hwnd)
-            end
-            user32.EndPaint(hwnd, ps)
-            return 0
-        end
-
-        if msg == WM_ERASEBKGND then
-            return 1
-        end
-
-        return nil
-    end)
-
-    if ok and result ~= nil then
-        return result
+    -- Enhanced safety: ensure we check if window still exists
+    if not user32.IsWindow(notification_hwnd) then
+        notification_hwnd = nil
+        return
     end
 
-    return user32.DefWindowProcA(hwnd, msg, wparam, lparam)
+    local hdc = user32.GetDC(notification_hwnd)
+    if hdc ~= nil then
+        -- CRITICAL SAFETY: Ensure ReleaseDC is ALWAYS called even if drawing fails
+        -- to prevent GDI resource leaks.
+        pcall(draw_notification_to_hdc, hdc, notification_hwnd)
+        user32.ReleaseDC(notification_hwnd, hdc)
+    end
 end
+
 
 -- Register custom notification window class
 local function register_notification_class()
@@ -3149,8 +3137,10 @@ local function register_notification_class()
         -- We pass the Windows Default function directly. This prevents the
         -- re-entrancy crash in lua51.dll.
         notification_wndproc = user32.DefWindowProcA
-        
-        local bg_brush = gdi32.CreateSolidBrush(COLOR_BG)
+
+        if notification_bg_brush == nil then
+            notification_bg_brush = gdi32.CreateSolidBrush(COLOR_BG)
+        end
 
         local wc = ffi.new("WNDCLASSEXA")
         wc.cbSize = ffi.sizeof("WNDCLASSEXA")
@@ -3161,7 +3151,7 @@ local function register_notification_class()
         wc.hInstance = notification_hinstance
         wc.hIcon = nil
         wc.hCursor = nil
-        wc.hbrBackground = bg_brush
+        wc.hbrBackground = notification_bg_brush
         wc.lpszMenuName = nil
         wc.lpszClassName = NOTIFICATION_CLASS_NAME
         wc.hIconSm = nil
@@ -3170,7 +3160,10 @@ local function register_notification_class()
 
         if notification_class_atom == 0 then
             dbg("Failed to register notification class")
-            gdi32.DeleteObject(bg_brush)
+            if notification_bg_brush ~= nil then
+                gdi32.DeleteObject(notification_bg_brush)
+                notification_bg_brush = nil
+            end
             return false
         end
 
@@ -3185,7 +3178,6 @@ end
 local function unregister_notification_class()
     if notification_wndproc ~= nil then
         notification_wndproc = nil
-        CALLBACK_ANCHOR.wndproc = nil
     end
 
     if notification_class_atom ~= nil then
@@ -3193,6 +3185,11 @@ local function unregister_notification_class()
             user32.UnregisterClassA(NOTIFICATION_CLASS_NAME, notification_hinstance)
         end)
         notification_class_atom = nil
+    end
+
+    if notification_bg_brush ~= nil then
+        gdi32.DeleteObject(notification_bg_brush)
+        notification_bg_brush = nil
     end
 
     dbg("Unregistered notification class")
@@ -3224,6 +3221,11 @@ local function notification_timer_callback()
             if notification_alpha >= FADE_MAX_ALPHA then
                 notification_alpha = FADE_MAX_ALPHA
                 notification_fade_state = "visible"
+                -- Only redraw once when fully visible
+                need_redraw = true
+            else
+                -- Redraw while fading in to update alpha
+                need_redraw = true
             end
 
             user32.SetLayeredWindowAttributes(notification_hwnd, 0, notification_alpha, LWA_ALPHA)
@@ -3232,14 +3234,12 @@ local function notification_timer_callback()
                 user32.ShowWindow(notification_hwnd, SW_SHOWNOACTIVATE)
                 notification_window_shown = true
             end
-            need_redraw = true
 
         elseif notification_fade_state == "visible" then
             if os.time() >= notification_end_time then
                 notification_fade_state = "out"
             end
-            -- Force redraw to keep text visible against DefWindowProc clearing it
-            need_redraw = true
+            -- Efficiency: No redraw needed while static
 
         elseif notification_fade_state == "out" then
             notification_alpha = notification_alpha - FADE_STEP
@@ -3251,7 +3251,9 @@ local function notification_timer_callback()
                 return
             end
             user32.SetLayeredWindowAttributes(notification_hwnd, 0, notification_alpha, LWA_ALPHA)
-            need_redraw = true
+            -- Efficiency: Windows handles alpha transparency on its own,
+            -- we don't need to re-render the bitmap itself.
+            need_redraw = false
         end
 
         -- CRASH FIX: Manually draw content from the timer thread
@@ -3277,9 +3279,8 @@ local function show_notification(title, message)
         return
     end
 
-    hide_notification()
-    obs.timer_remove(notification_timer_callback)
-
+    -- STABILITY FIX: Instead of always destroying the window, we reuse it.
+    -- This avoids the risky DestroyWindow/CreateWindow cycle during stress periods.
     notification_title = title or "Notification"
     notification_message = message or ""
     notification_end_time = os.time() + math.ceil(CONFIG.notification_duration)
@@ -3297,39 +3298,56 @@ local function show_notification(title, message)
             return
         end
 
-        local screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
-        local x = screen_width - NOTIFICATION_WIDTH - NOTIFICATION_MARGIN
-        local y = NOTIFICATION_MARGIN
+        -- Check if window still exists and is valid
+        local needs_create = true
+        if notification_hwnd ~= nil then
+            if user32.IsWindow(notification_hwnd) then
+                needs_create = false
+            else
+                notification_hwnd = nil -- Invalid handle
+            end
+        end
 
-        local ex_style = WS_EX_TOPMOST + WS_EX_TOOLWINDOW + WS_EX_NOACTIVATE + WS_EX_LAYERED + WS_EX_TRANSPARENT
+        if needs_create then
+            destroy_orphaned_notifications()
 
-        destroy_orphaned_notifications()
+            local screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
+            local x = screen_width - NOTIFICATION_WIDTH - NOTIFICATION_MARGIN
+            local y = NOTIFICATION_MARGIN
 
-        notification_hwnd = user32.CreateWindowExA(
-            ex_style,
-            NOTIFICATION_CLASS_NAME,
-            NOTIFICATION_WINDOW_TITLE,
-            WS_POPUP,
-            x, y,
-            NOTIFICATION_WIDTH, NOTIFICATION_HEIGHT,
-            nil, nil,
-            notification_hinstance,
-            nil
-        )
+            local ex_style = WS_EX_TOPMOST + WS_EX_TOOLWINDOW + WS_EX_NOACTIVATE + WS_EX_LAYERED + WS_EX_TRANSPARENT
 
-        if notification_hwnd == nil then
-            dbg("CreateWindowExA failed")
-            return
+            notification_hwnd = user32.CreateWindowExA(
+                ex_style,
+                NOTIFICATION_CLASS_NAME,
+                NOTIFICATION_WINDOW_TITLE,
+                WS_POPUP,
+                x, y,
+                NOTIFICATION_WIDTH, NOTIFICATION_HEIGHT,
+                nil, nil,
+                notification_hinstance,
+                nil
+            )
+
+            if notification_hwnd == nil then
+                dbg("CreateWindowExA failed")
+                return
+            end
+            dbg("New notification window created (Reuse initialized)")
+        else
+            dbg("Reusing existing notification window")
         end
 
         user32.SetLayeredWindowAttributes(notification_hwnd, 0, 0, LWA_ALPHA)
 
-        -- CRASH FIX: Initial manual draw
+        -- Initial manual draw to set the new content
         draw_notification_content()
 
+        -- Restart/Update timer
+        obs.timer_remove(notification_timer_callback)
         obs.timer_add(notification_timer_callback, FADE_INTERVAL)
 
-        dbg("Notification shown: " .. title .. " | " .. message)
+        dbg("Notification triggered: " .. title .. " | " .. message)
     end)
 
     if not ok then
@@ -3392,6 +3410,7 @@ local function cleanup_notifications()
     notification_end_time = 0
     notification_title = ""
     notification_message = ""
+    notification_hwnd = nil  -- Explicitly reset handle
 end
 
 -- ============================================================================
@@ -4131,6 +4150,7 @@ local function move_file(src, folder_name, game_name)
     return result
 end
 
+
 -- ============================================================================
 -- EVENT HANDLING
 -- ============================================================================
@@ -4288,6 +4308,36 @@ local function check_split_files()
     obs.obs_output_release(recording)
 end
 
+local function delayed_recording_init()
+    obs.timer_remove(delayed_recording_init)
+
+    if not CONFIG.organize_recordings then return end
+
+    connect_recording_signals()
+
+    local recording = obs.obs_frontend_get_recording_output()
+    if recording then
+        local cd = obs.calldata_create()
+        local ph = obs.obs_output_get_proc_handler(recording)
+        if ph then
+            obs.proc_handler_call(ph, "get_last_file", cd)
+            current_recording_file = obs.calldata_string(cd, "path")
+            if current_recording_file and current_recording_file ~= "" then
+                dbg("Initial recording file: " .. current_recording_file)
+            end
+        end
+        obs.calldata_destroy(cd)
+        obs.obs_output_release(recording)
+    end
+
+    obs.timer_add(check_split_files, 1000)
+
+    log("Recording initialized (delayed) - monitoring for file splits")
+
+    local game_info = recording_folder_name or CONFIG.fallback_folder
+    notify("Recording Started", "Game: " .. game_info)
+end
+
 -- ============================================================================
 -- FRONTEND EVENT HANDLER
 -- ============================================================================
@@ -4374,33 +4424,15 @@ local function on_event(event)
 
         elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED then
             if CONFIG.organize_recordings then
-                connect_recording_signals()
-
-                local recording = obs.obs_frontend_get_recording_output()
-                if recording then
-                    local cd = obs.calldata_create()
-                    local ph = obs.obs_output_get_proc_handler(recording)
-                    if ph then
-                        obs.proc_handler_call(ph, "get_last_file", cd)
-                        current_recording_file = obs.calldata_string(cd, "path")
-                        if current_recording_file and current_recording_file ~= "" then
-                            dbg("Initial recording file: " .. current_recording_file)
-                        end
-                    end
-                    obs.calldata_destroy(cd)
-                    obs.obs_output_release(recording)
-                end
-
-                obs.timer_add(check_split_files, 1000)
-
-                log("Recording started - monitoring for file splits")
-
-                local game_info = recording_folder_name or CONFIG.fallback_folder
-                notify("Recording Started", "Game: " .. game_info)
+                -- SAFETY: Delay initialization by 0.5s to prevent crash in graphics thread
+                -- during high-stress recording startup period
+                obs.timer_add(delayed_recording_init, 500)
+                log("Recording started - initialization scheduled in 0.5s...")
             end
 
         elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED then
             if CONFIG.organize_recordings then
+                obs.timer_remove(delayed_recording_init)
                 obs.timer_remove(check_split_files)
 
                 local now = os.time()
@@ -4659,7 +4691,7 @@ function script_description()
     return [[
 <center>
 <p style="font-size:24px; font-weight:bold; color:#00d4aa;">SMART REPLAY MOVER</p>
-<p style="color:#888;">Automatic Game Clip Organizer v2.7.3</p>
+<p style="color:#888;">Automatic Game Clip Organizer v2.7.4</p>
 </center>
 
 <hr style="border-color:#333;">
@@ -4920,7 +4952,7 @@ function script_load(settings)
         for _ in pairs(GAME_DATABASE) do db_count = db_count + 1 end
     end
 
-    log("Smart Replay Mover v2.7.3 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.7.4 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
     log("Database: " .. db_count .. " games | Custom: " .. custom_count .. " mappings")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
@@ -4930,6 +4962,7 @@ end
 function script_unload()
     obs.timer_remove(check_split_files)
     obs.timer_remove(notification_timer_callback)
+    obs.timer_remove(delayed_recording_init)  -- Safety: stop delayed init if script unloads early
     notification_timer_should_stop = true
 
     disconnect_recording_signals()
@@ -4949,7 +4982,7 @@ function script_unload()
 end
 
 -- ============================================================================
--- END OF SCRIPT v2.7.3
+-- END OF SCRIPT v2.7.4
 -- Copyright (C) 2025-2026 SlonickLab - Licensed under GPL v3
 -- https://github.com/SlonickLab/Smart-Replay-Mover
 -- ============================================================================
