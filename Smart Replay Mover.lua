@@ -1,7 +1,8 @@
--- ============================================================================
 -- Smart Replay Mover v2.7.4
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
+local VERSION = "2.7.4"
+local GITHUB_RAW_URL = "https://raw.githubusercontent.com/SlonickLab/Smart-Replay-Mover/main/Smart%20Replay%20Mover.lua"
 --
 -- Copyright (C) 2025-2026 SlonickLab
 --
@@ -2793,6 +2794,7 @@ ffi.cdef[[
     HINSTANCE GetModuleHandleA(LPCSTR lpModuleName);
     int GetSystemMetrics(int nIndex);
     BOOL InvalidateRect(HWND hWnd, const RECT* lpRect, BOOL bErase);
+    unsigned int WinExec(LPCSTR lpCmdLine, unsigned int uCmdShow);
 
     // Paint structure for WM_PAINT
     typedef struct {
@@ -2944,6 +2946,10 @@ local notification_window_shown = false
 local NOTIFICATION_CLASS_NAME = "SmartReplayNotificationClass"
 local notification_wndproc = nil
 local notification_class_atom = nil
+
+-- Update checker state
+local update_status_msg = "v" .. VERSION
+local GITHUB_VERSION_FILE = os.getenv("TEMP") .. "\\smart_replay_mover_update.txt"
 
 local notification_destroying = false
 
@@ -4714,11 +4720,87 @@ Optional date subfolders
 </td></tr>
 </table>
 
-<hr style="border-color:#333;">
-<center>
-<p style="font-size:9px; color:#555;">2025-2026 SlonickLab | GPL v3 | <a href="https://github.com/SlonickLab/Smart-Replay-Mover">GitHub</a></p>
 </center>
 ]]
+end
+
+local function parse_update_result()
+    local file = io.open(GITHUB_VERSION_FILE, "r")
+    if not file then
+        update_status_msg = "❌ Check failed: No response"
+        obs.timer_remove(parse_update_result)
+        log("Update check file not found.")
+        return
+    end
+
+    local content = file:read("*a")
+    file:close()
+    os.remove(GITHUB_VERSION_FILE)
+
+    if not content or content == "" then
+        update_status_msg = "❌ Check failed: Server error"
+    else
+        if content:match("404: Not Found") then
+            update_status_msg = "❌ Check failed: File Not Found (404)"
+        else
+            local latest_version = content:match("Smart Replay Mover v?(%d+%.%d+%.?[%d]*)")
+            if not latest_version then latest_version = content:match("v(%d+%.%d+%.%d+)") end
+            
+            if latest_version then
+                latest_version = latest_version:gsub("^%s*(.-)%s*$", "%1")
+                
+                -- Helper to compare x.y.z versions
+                local function is_newer(new, old)
+                    local new_m, new_n, new_p = new:match("(%d+)%.(%d+)%.?(%d*)")
+                    local old_m, old_n, old_p = old:match("(%d+)%.(%d+)%.?(%d*)")
+                    new_m, new_n, new_p = tonumber(new_m or 0), tonumber(new_n or 0), tonumber(new_p or 0)
+                    old_m, old_n, old_p = tonumber(old_m or 0), tonumber(old_n or 0), tonumber(old_p or 0)
+                    if new_m > old_m then return true end
+                    if new_m < old_m then return false end
+                    if new_n > old_n then return true end
+                    if new_n < old_n then return false end
+                    return new_p > old_p
+                end
+
+                if latest_version == VERSION then
+                    update_status_msg = "✅ You are up to date (v" .. VERSION .. ")"
+                elseif is_newer(latest_version, VERSION) then
+                    update_status_msg = "🎁 New update: v" .. latest_version .. "!"
+                else
+                    update_status_msg = "✅ Running test version (v" .. VERSION .. ")"
+                end
+            else
+                update_status_msg = "❌ Check failed: Invalid data"
+            end
+        end
+    end
+
+    obs.timer_remove(parse_update_result)
+    
+    if script_settings then
+        obs.obs_data_set_string(script_settings, "check_updates_status", update_status_msg)
+    end
+    
+    log("Update Check Result: " .. update_status_msg)
+end
+
+local function check_for_updates(props, p)
+    update_status_msg = "⏳ Checking GitHub..."
+    
+    -- Silent execution via Windows API
+    -- We use WinExec with SW_HIDE (0) to run curl without a CMD window.
+    if kernel32 then
+        -- Removed -f to capture error body for diagnostics
+        local cmd = string.format('cmd.exe /c curl -s -m 5 "%s" > "%s"', GITHUB_RAW_URL, GITHUB_VERSION_FILE)
+        kernel32.WinExec(cmd, 0) -- 0 = SW_HIDE
+        
+        -- Start a timer to read the file after it's saved (2.5s delay)
+        obs.timer_add(parse_update_result, 2500)
+    else
+        update_status_msg = "❌ Error: kernel32 missing"
+    end
+
+    return true -- Refresh UI to show "Checking..."
 end
 
 function script_properties()
@@ -4859,6 +4941,14 @@ function script_properties()
 
     obs.obs_properties_add_group(props, "ffmpeg_section",
         "🎬  FFMPEG THUMBNAILS (Advanced)", obs.OBS_GROUP_NORMAL, ffmpeg_group)
+
+    -- UPDATE CHECKER
+    obs.obs_properties_add_button(props, "check_updates_btn",
+        "🔄  Check for Updates", check_for_updates)
+    
+    obs.obs_properties_add_text(props, "check_updates_status",
+        update_status_msg,
+        obs.OBS_TEXT_INFO)
 
     return props
 end
