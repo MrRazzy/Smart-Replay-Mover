@@ -3947,13 +3947,10 @@ local function run_task_sync_hidden(commands, unique_id)
     if shell32.ShellExecuteExA(sei) ~= 0 then
         -- Wait for finish (Blocking)
         if sei.hProcess ~= nil then
-            -- Safety: INFINITE wait required for large video files (embedding can take minutes)
-            -- Warning: This will block OBS UI during the operation.
-            local res = kernel32.WaitForSingleObject(sei.hProcess, 0xFFFFFFFF)
-            if res == 0x00000102 then -- WAIT_TIMEOUT
-                log("ERROR: FFmpeg process timed out! Terminating...")
-                kernel32.TerminateProcess(sei.hProcess, 1)
-            end
+            -- SAFETY: INFINITE wait required for large video files (embedding can take minutes)
+            -- WARNING: This will block OBS UI during the operation! 
+            -- This is expected behavior for a synchronous operation to ensure file integrity.
+            kernel32.WaitForSingleObject(sei.hProcess, 0xFFFFFFFF)
             kernel32.CloseHandle(sei.hProcess)
         end
         
@@ -4729,22 +4726,32 @@ local function parse_update_result()
     -- This function is called by a timer after check_for_updates initiates a download.
     -- It reads the downloaded file from the temp directory.
 
-    local file = io.open(GITHUB_VERSION_FILE, "r")
+    local file, err = io.open(GITHUB_VERSION_FILE, "r")
     if not file then
         -- This can happen if the download failed completely or was blocked,
         -- resulting in no output file.
         update_status_msg = "❌ Check failed: No response"
         obs.timer_remove(parse_update_result)
-        print("[Smart Replay ERROR] Update file not found!")
+        dbg("Update file not found: " .. tostring(err))
         if script_settings then obs.obs_data_set_string(script_settings, "check_updates_status", update_status_msg) end
         return
     end
 
-    local content = file:read("*a")
-    file:close()
+    local content = nil
+    local read_ok, read_err = pcall(function()
+        content = file:read("*a")
+        file:close()
+    end)
+    
+    if not read_ok then
+        update_status_msg = "❌ Check failed: Read error"
+        obs.timer_remove(parse_update_result)
+        dbg("Failed to read update file: " .. tostring(read_err))
+        return
+    end
     
     -- The temporary file should be cleaned up immediately after reading.
-    os.remove(GITHUB_VERSION_FILE)
+    pcall(os.remove, GITHUB_VERSION_FILE)
 
     -- Robustness check: A valid script file must start with "-- Smart Replay Mover".
     -- This prevents parsing HTML error pages or other invalid data.
@@ -4911,16 +4918,14 @@ function script_properties()
     obs.obs_properties_add_text(ffmpeg_group, "ffmpeg_info", "Note: Requires FFmpeg installed. Adds processing time regarding disk speed.", obs.OBS_TEXT_INFO)
     obs.obs_properties_add_group(props, "ffmpeg_section", "🎬  FFMPEG THUMBNAILS (Advanced)", obs.OBS_GROUP_NORMAL, ffmpeg_group)
 
-    -- UPDATE CHECKER (Stable Layout)
-    local update_button_group = obs.obs_properties_create()
-    obs.obs_properties_add_button(update_button_group, "check_updates_btn", button_text, check_for_updates)
-    obs.obs_properties_add_group(props, "update_button_section", "", obs.OBS_GROUP_NORMAL, update_button_group)
+    -- SOFTWARE CHECKING (Consolidated Layout)
+    local update_group = obs.obs_properties_create()
+    obs.obs_properties_add_button(update_group, "check_updates_btn", button_text, check_for_updates)
     
     if update_status_msg and update_status_msg ~= "" then
-        local status_group = obs.obs_properties_create()
-        obs.obs_properties_add_text(status_group, "check_updates_status", update_status_msg, obs.OBS_TEXT_INFO)
-        obs.obs_properties_add_group(props, "update_status_section", "", obs.OBS_GROUP_NORMAL, status_group)
+        obs.obs_properties_add_text(update_group, "check_updates_status", update_status_msg, obs.OBS_TEXT_INFO)
     end
+    obs.obs_properties_add_group(props, "update_section", "🔄  SOFTWARE CHECKING", obs.OBS_GROUP_NORMAL, update_group)
 
     return props
 end
