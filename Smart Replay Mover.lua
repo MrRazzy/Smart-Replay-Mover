@@ -1976,6 +1976,8 @@ local GAME_DATABASE = {
     ["zombidle"] = "Zombidle: REMONSTERED",
     ["zps"] = "Zombie Panic! Source",
     ["蒼の彼方のフォーリズム"] = "Ao no Kanata no Four Rhythm",
+    ["HorizonForbiddenWest"] = "Horizon Forbidde West",
+    ["Icarus-Win64-Shipping"] = "Icarus",
 }
 
 -- ============================================================================
@@ -5112,7 +5114,7 @@ function script_load(settings)
         for _ in pairs(GAME_DATABASE) do db_count = db_count + 1 end
     end
 
-    log("Smart Replay Mover v2.7.3 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.7.5 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
     log("Database: " .. db_count .. " games | Custom: " .. custom_count .. " mappings")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
