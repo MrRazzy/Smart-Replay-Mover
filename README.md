@@ -6,7 +6,7 @@
 
   **Automatically organize your Replay Buffer clips, Recordings, and Screenshots into game-specific folders.**
 
-  [![Version](https://img.shields.io/badge/version-2.7.4-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
+  [![Version](https://img.shields.io/badge/version-2.7.5-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
   [![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)](LICENSE)
   [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)]()
   [![OBS](https://img.shields.io/badge/OBS-28.x+-302E31.svg)](https://obsproject.com/)
@@ -250,6 +250,14 @@
 
   ## 📋 Changelog
   
+  ### v2.7.5
+  - **🔄 Auto Update Check** — Script now checks for updates automatically on load
+  - **📍 Status at Top** — Update status displayed at the very top of script properties
+  - **📥 Download Button** — Clickable button opens releases page directly in browser
+  - **🔄 Refresh Button** — Manual refresh to display update status after check completes
+  - **💬 Clearer Messages** — Improved status text like "🆕 New version available: vX.X.X"
+  - **🔗 Credits Link** — Added clickable GitHub link in script description
+
   ### v2.7.4
   - **🔄 Update Checker** — Added a "Check for Updates" button to quickly see if a new version is out
   - **❄️ Freeze Fix** — Implemented window reuse to prevent OBS hangs during high-stress events
