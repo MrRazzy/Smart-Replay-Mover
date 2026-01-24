@@ -1,8 +1,9 @@
--- Smart Replay Mover v2.7.4
+-- Smart Replay Mover v2.7.5
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
-local VERSION = "2.7.4"
+local VERSION = "2.7.5"
 local GITHUB_RAW_URL = "https://raw.githubusercontent.com/SlonickLab/Smart-Replay-Mover/main/Smart%20Replay%20Mover.lua"
+local GITHUB_RELEASES_URL = "https://github.com/SlonickLab/Smart-Replay-Mover/releases"
 --
 -- Copyright (C) 2025-2026 SlonickLab
 --
@@ -2953,6 +2954,10 @@ local GITHUB_VERSION_FILE = os.getenv("TEMP") .. "\\smart_replay_mover_update.tx
 
 local notification_destroying = false
 
+-- Startup update check state (auto-check on load)
+local startup_update_status = "📦 v" .. VERSION
+local startup_update_check_done = false
+
 local notification_timer_should_stop = false
 
 -- GDI Objects for rendering
@@ -4695,20 +4700,20 @@ function script_description()
     return [[
 <center>
 <p style="font-size:24px; font-weight:bold; color:#00d4aa;">SMART REPLAY MOVER</p>
-<p style="color:#888;">Automatic Game Clip Organizer v2.7.4</p>
+<p style="color:#888;">Automatic Game Clip Organizer v]] .. VERSION .. [[</p>
 </center>
 
 <hr style="border-color:#333;">
 
 <table width="100%">
-<tr><td width="50%" valign="top">
+<tr><td width="50%" valign="top" align="center">
 <p style="color:#00d4aa; font-weight:bold;">🎮 AUTO-ORGANIZE</p>
 <p style="font-size:11px;">
 Detects active game automatically<br>
 Creates game-named folders<br>
 Replays, recordings & screenshots
 </p>
-</td><td width="50%" valign="top">
+</td><td width="50%" valign="top" align="center">
 <p style="color:#ff6b6b; font-weight:bold;">🛡️ SMART & SAFE</p>
 <p style="font-size:11px;">
 Spam protection with cooldown<br>
@@ -4718,8 +4723,68 @@ Optional date subfolders
 </td></tr>
 </table>
 
+<center>
+<p style="font-size:11px; color:#666; margin-top:10px;">
+Made by <b>SlonickLab</b> • <a href="https://github.com/SlonickLab/Smart-Replay-Mover" style="color:#00d4aa;">GitHub</a>
+</p>
 </center>
 ]]
+end
+
+-- Parse result of startup auto-update check
+local function parse_startup_update_result()
+    obs.timer_remove(parse_startup_update_result)
+    
+    local file = io.open(GITHUB_VERSION_FILE, "r")
+    if not file then
+        startup_update_status = "⚠️ Update check failed"
+        startup_update_check_done = true
+        return
+    end
+    
+    local content = file:read("*a")
+    file:close()
+    pcall(os.remove, GITHUB_VERSION_FILE)
+    
+    if not content or not content:match("^-- Smart Replay Mover") then
+        startup_update_status = "⚠️ Update check failed"
+    else
+        local latest_version = content:match("Smart Replay Mover v?(%d+%.%d+%.?[%d]*)")
+        if latest_version then
+            latest_version = latest_version:gsub("^%s*(.-)%s*$", "%1")
+            
+            local function is_newer(new, old)
+                local new_m, new_n, new_p = new:match("(%d+)%.(%d+)%.?(%d*)")
+                local old_m, old_n, old_p = old:match("(%d+)%.(%d+)%.?(%d*)")
+                new_m, new_n, new_p = tonumber(new_m or 0), tonumber(new_n or 0), tonumber(new_p or 0)
+                old_m, old_n, old_p = tonumber(old_m or 0), tonumber(old_n or 0), tonumber(old_p or 0)
+                if new_m > old_m then return true end
+                if new_m < old_m then return false end
+                if new_n > old_n then return true end
+                if new_n < old_n then return false end
+                return new_p > old_p
+            end
+            
+            if latest_version == VERSION then
+                startup_update_status = "✅ Up to date (v" .. VERSION .. ")"
+            elseif is_newer(latest_version, VERSION) then
+                startup_update_status = "🆕 New version available: v" .. latest_version
+            else
+                startup_update_status = "✅ Dev version (v" .. VERSION .. ")"
+            end
+        else
+            startup_update_status = "⚠️ Parse error"
+        end
+    end
+    
+    startup_update_check_done = true
+    log("Update Check: " .. startup_update_status)
+    
+    -- Trigger UI refresh by toggling hidden property
+    if script_settings then
+        local current = obs.obs_data_get_bool(script_settings, "__startup_refresh")
+        obs.obs_data_set_bool(script_settings, "__startup_refresh", not current)
+    end
 end
 
 local function parse_update_result()
@@ -4820,6 +4885,32 @@ end
 local update_check_in_progress = false
 local button_text = "                  🔄  Check for Updates                  "
 
+-- Callback for refresh button - dynamically updates the status text
+local function refresh_update_status(props, p)
+    -- Get the update_info property and change its description to current status
+    local update_prop = obs.obs_properties_get(props, "update_info")
+    if update_prop then
+        obs.obs_property_set_description(update_prop, startup_update_status)
+    end
+    
+    -- Show/hide the download button based on whether update is available
+    local link_prop = obs.obs_properties_get(props, "open_releases_btn")
+    if link_prop then
+        obs.obs_property_set_visible(link_prop, startup_update_status:match("🆕") ~= nil)
+    end
+    
+    return true
+end
+
+-- Callback for download button - opens releases page in browser (silent, no terminal window)
+local function open_releases_url(props, p)
+    if kernel32 then
+        local cmd = 'powershell -WindowStyle Hidden -Command "Start-Process \'' .. GITHUB_RELEASES_URL .. '\'"'
+        kernel32.WinExec(cmd, 0)
+    end
+    return false
+end
+
 local function check_for_updates(props, p)
 	if update_check_in_progress then
 		-- If a check is running, a second click should just refresh the UI.
@@ -4861,6 +4952,17 @@ end
 
 function script_properties()
     local props = obs.obs_properties_create()
+
+    -- UPDATE STATUS (FIRST ELEMENT - shown at top of UI)
+    obs.obs_properties_add_text(props, "update_info", startup_update_status, obs.OBS_TEXT_INFO)
+    
+    -- Download button - opens releases page in browser (hidden until update available)
+    local download_btn = obs.obs_properties_add_button(props, "open_releases_btn", "📥 Download Update", open_releases_url)
+    obs.obs_property_set_visible(download_btn, startup_update_status:match("🆕") ~= nil)
+    
+    -- Refresh button - clicking updates the status display
+    obs.obs_properties_add_button(props, "refresh_status_btn", "🔄 Refresh Status", refresh_update_status)
+    obs.obs_properties_add_text(props, "refresh_hint", "Click after ~4 seconds to see update status", obs.OBS_TEXT_INFO)
 
     -- FILE NAMING GROUP
     local naming_group = obs.obs_properties_create()
@@ -4917,15 +5019,6 @@ function script_properties()
     obs.obs_properties_add_path(ffmpeg_group, "ffmpeg_path", "📂  FFmpeg Executable Path (ffmpeg.exe)", obs.OBS_PATH_FILE, "Executables (*.exe);;All Files (*.*)", nil)
     obs.obs_properties_add_text(ffmpeg_group, "ffmpeg_info", "Note: Requires FFmpeg installed. Adds processing time regarding disk speed.", obs.OBS_TEXT_INFO)
     obs.obs_properties_add_group(props, "ffmpeg_section", "🎬  FFMPEG THUMBNAILS (Advanced)", obs.OBS_GROUP_NORMAL, ffmpeg_group)
-
-    -- SOFTWARE CHECKING (Consolidated Layout)
-    local update_group = obs.obs_properties_create()
-    obs.obs_properties_add_button(update_group, "check_updates_btn", button_text, check_for_updates)
-    
-    if update_status_msg and update_status_msg ~= "" then
-        obs.obs_properties_add_text(update_group, "check_updates_status", update_status_msg, obs.OBS_TEXT_INFO)
-    end
-    obs.obs_properties_add_group(props, "update_section", "🔄  SOFTWARE CHECKING", obs.OBS_GROUP_NORMAL, update_group)
 
     return props
 end
@@ -5019,17 +5112,39 @@ function script_load(settings)
         for _ in pairs(GAME_DATABASE) do db_count = db_count + 1 end
     end
 
-    log("Smart Replay Mover v2.7.4 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.7.3 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
     log("Database: " .. db_count .. " games | Custom: " .. custom_count .. " mappings")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
         " | Fallback: " .. CONFIG.fallback_folder)
+    
+    -- AUTO UPDATE CHECK (runs async, result ready by UI open)
+    if kernel32 then
+        pcall(function()
+            if obs.os_file_exists(GITHUB_VERSION_FILE) then
+                os.remove(GITHUB_VERSION_FILE)
+            end
+            math.randomseed(os.time())
+            local cache_buster = "?t=" .. os.time() .. math.random(1000, 9999)
+            local cmd = string.format(
+                'powershell -Command "Invoke-WebRequest -Uri \'%s%s\' -OutFile \'%s\'"',
+                GITHUB_RAW_URL, cache_buster, GITHUB_VERSION_FILE
+            )
+            kernel32.WinExec(cmd, 0)
+            obs.timer_add(parse_startup_update_result, 4000)
+            dbg("Auto update check started")
+        end)
+    else
+        startup_update_status = "⚠️ Check unavailable"
+        startup_update_check_done = true
+    end
 end
 
 function script_unload()
     obs.timer_remove(check_split_files)
     obs.timer_remove(notification_timer_callback)
-    obs.timer_remove(delayed_recording_init)  -- Safety: stop delayed init if script unloads early
+    obs.timer_remove(delayed_recording_init)
+    obs.timer_remove(parse_startup_update_result)  -- Stop startup update check if still running
     notification_timer_should_stop = true
 
     disconnect_recording_signals()
@@ -5049,7 +5164,7 @@ function script_unload()
 end
 
 -- ============================================================================
--- END OF SCRIPT v2.7.4
+-- END OF SCRIPT v2.7.5
 -- Copyright (C) 2025-2026 SlonickLab - Licensed under GPL v3
 -- https://github.com/SlonickLab/Smart-Replay-Mover
 -- ============================================================================
