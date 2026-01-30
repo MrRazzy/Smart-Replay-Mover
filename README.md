@@ -253,7 +253,7 @@
   ### v2.7.6
   - **🛡️ Anti-Cheat Compatibility** — Fixed detection for protected games (ARC Raiders, THE FINALS) using advanced API fallback
   - **🎮 445+ New Games** — Massive database expansion from Discord's game list and community sources
-  - **📈 2,300+ Games** — Total database now covers over 1,900 games
+  - **📈 1,900+ Games** — Total database now covers over 1,900 games
 
   ### v2.7.5
   - **🔄 Auto Update Check** — Script now checks for updates automatically on load
