@@ -1,7 +1,7 @@
--- Smart Replay Mover v2.7.5
+-- Smart Replay Mover v2.7.6
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
-local VERSION = "2.7.5"
+local VERSION = "2.7.6"
 local GITHUB_RAW_URL = "https://raw.githubusercontent.com/SlonickLab/Smart-Replay-Mover/main/Smart%20Replay%20Mover.lua"
 local GITHUB_RELEASES_URL = "https://github.com/SlonickLab/Smart-Replay-Mover/releases"
 --
@@ -32,6 +32,11 @@ local GITHUB_RELEASES_URL = "https://github.com/SlonickLab/Smart-Replay-Mover/re
 -- Plagiarism or removal of this notice violates the license terms.
 --
 -- ============================================================================
+-- CHANGELOG v2.7.6:
+--   - Critical: Fixed detection for games with Anti-Cheat (ARC Raiders, THE FINALS)
+--   - Added fallback to QueryFullProcessImageNameA when OpenProcess is blocked
+--   - Improved robustness of process detection logic
+--
 -- CHANGELOG v2.7.4:
 --   - Critical: Fixed OBS freeze by implementing Notification Window Reuse
 --   - Optimized redraw throttling (CPU efficiency)
@@ -151,7 +156,6 @@ local GAME_DATABASE = {
     ["age2_x1"] = "Age of Empires II: The Conquerors",
     ["age3y"] = "Age of Empires® III: Complete Collection",
     ["ageofconan"] = "Age of Conan",
-    ["ai"] = "Alien: Isolation",
     ["aim hero"] = "Aim Hero",
     ["aimtastic"] = "Aimtastic",
     ["aion.bin"] = "Aion",
@@ -223,6 +227,7 @@ local GAME_DATABASE = {
     ["avp_dx11"] = "Aliens vs Predator",
     ["awesomenauts"] = "Awesomenauts",
     ["axiomverge"] = "Axiom Verge",
+    ["b1-win64-shipping"] = "Black Myth: Wukong",
     ["backtobed"] = "Back to Bed",
     ["badnorth"] = "Bad North",
     ["baldur"] = "Baldur's Gate",
@@ -262,12 +267,14 @@ local GAME_DATABASE = {
     ["besiege"] = "Besiege",
     ["bf1"] = "Battlefield 1",
     ["bf2"] = "Battlefield 2",
+    ["bf2042"] = "Battlefield 2042",
     ["bf3"] = "Battlefield 3",
     ["bf4"] = "Battlefield 4",
     ["bf4cte"] = "Battlefiled 4 CTE",
     ["bfbc2game"] = "Battlefield: Bad Company 2",
     ["bfh"] = "Battlefield™ Hardline",
-    ["bfvob"] = "Battlefield 5 Open Beta",
+    ["bfvob"] = "Battlefield 5",
+    ["bf6"] = "Battlefield 6",
     ["bge"] = "Beyond Good and Evil",
     ["bgi"] = "Go! Go! Nippon! ~My First Trip to Japan~",
     ["bgt"] = "Bloody Good Time",
@@ -386,6 +393,7 @@ local GAME_DATABASE = {
     ["cms2015"] = "Car Mechanic Simulator 2015",
     ["cms2018"] = "Car Mechanic Simulator 2018",
     ["cmw"] = "Chivalry: Medieval",
+    ["cod"] = "Call of Duty: Warzone",
     ["cod2mp_s"] = "Call of Duty 2",
     ["cod2sp_s"] = "Call of Duty 2",
     ["codsp_s"] = "Call of Duty 2:",
@@ -418,7 +426,7 @@ local GAME_DATABASE = {
     ["crusader2"] = "Stronghold Crusader 2",
     ["crushcrush"] = "Crush Crush",
     ["cryptark"] = "CRYPTARK",
-    ["crysis"] = "Crysis 4",
+    ["crysis"] = "Crysis",
     ["crysis2"] = "Crysis 2",
     ["crysis3"] = "Crysis 3",
     ["crysis64"] = "Crysis",
@@ -472,6 +480,7 @@ local GAME_DATABASE = {
     ["deadislandgame"] = "Dead Island",
     ["deadislandgame_x86_rwdi"] = "Dead Island Riptide",
     ["deadislandriptidegame"] = "Dead Island Riptide Definitive Edition",
+    ["deadlock"] = "Deadlock",
     ["deadly30"] = "Deadly 30",
     ["deadmaze"] = "Dead Maze",
     ["deadrising2"] = "Dead Rising 2",
@@ -485,6 +494,7 @@ local GAME_DATABASE = {
     ["deceit"] = "Deceit",
     ["deep space waifu"] = "DEEP SPACE WAIFU",
     ["defensegrid2_release"] = "Defense Grid 2",
+    ["deltaforceclient-win64-shipping"] = "Delta Force",
     ["democracy3"] = "Democracy 3",
     ["deponia"] = "Deponia: The Complete Journey",
     ["deponia2"] = "Chaos on Deponia",
@@ -816,6 +826,7 @@ local GAME_DATABASE = {
     ["gw3"] = "Geometry Wars 3",
     ["gwent"] = "Gwent",
     ["gzdoom - play brutal doom"] = "Brutal Doom",
+    ["gzwclientsteam-win64-shipping"] = "Gray Zone Warfare",
     ["h1z1"] = "H1Z1",
     ["h5_game"] = "Might and Magic - Heroes V",
     ["hackerevolution"] = "Hacker Evolution",
@@ -875,6 +886,7 @@ local GAME_DATABASE = {
     ["homefront"] = "Homefront",
     ["homefront2_release"] = "Homefront: The Revolution",
     ["hon"] = "Heroes of Newerth",
+    ["horizonforbiddenwest"] = "Horizon Forbidde West",
     ["horseshoes & hand grenades"] = "Hot Dogs",
     ["hotlava"] = "Hot Lava",
     ["hotlinegl"] = "Hotline Miami",
@@ -899,6 +911,7 @@ local GAME_DATABASE = {
     ["iamweaponrevival"] = "I am weapon: Revival",
     ["ibbobb"] = "ibb & obb",
     ["ic"] = "Impossible Creatures",
+    ["icarus-win64-shipping"] = "Icarus",
     ["idledragons"] = "Idle Champions of the Forgotten Realms",
     ["ige_wpf64"] = "Far Cry 4",
     ["impossiblegame"] = "The Impossible Game",
@@ -1038,6 +1051,7 @@ local GAME_DATABASE = {
     ["lss"] = "Loading Screen Simulator",
     ["lumini_win64"] = "Lumini",
     ["lyne"] = "LYNE",
+    ["m1-win64-shipping"] = "The First Descendant",
     ["mabinogi"] = "Mabinogi",
     ["madmachines"] = "Mad Machines",
     ["madmax"] = "Mad Max",
@@ -1052,6 +1066,7 @@ local GAME_DATABASE = {
     ["maplestory"] = "MapleStory",
     ["maplestory2"] = "MapleStory 2",
     ["marssteam"] = "Surviving Mars",
+    ["marvel-win64-shipping"] = "Marvel Rivals",
     ["marvelheroes2015"] = "Marvel Heroes 2015",
     ["marvelheroes2016"] = "Marvel Heroes 2016",
     ["masseffect"] = "Mass Effect",
@@ -1196,6 +1211,7 @@ local GAME_DATABASE = {
     ["olliolli2"] = "OlliOlli2",
     ["omdo"] = "OMDO",
     ["omensight"] = "Omensight",
+    ["once_human"] = "Once Human",
     ["one finger death punch"] = "One Finger Death Punch",
     ["oneshot"] = "OneShot",
     ["onward"] = "Onward",
@@ -1234,6 +1250,7 @@ local GAME_DATABASE = {
     ["paradiseisland"] = "Paradise Island",
     ["passpartout"] = "Passpartout: The Starving Artist",
     ["pathofexile"] = "Path of Exile",
+    ["pathofexile2"] = "Path of Exile 2",
     ["pathofexile_x64steam"] = "Path of Exile",
     ["pathofexilesteam"] = "Path of Exile",
     ["patriots"] = "Rise of Nations: Extended Edition",
@@ -1594,6 +1611,7 @@ local GAME_DATABASE = {
     ["sshock"] = "System Shock: Enhanced Edition",
     ["sspace"] = "Shaddow Space",
     ["stalker-cop"] = "S.T.A.L.K.E.R.: Call of Pripyat",
+    ["stalker2-win64-shipping"] = "S.T.A.L.K.E.R. 2",
     ["stanley"] = "The Stanley Parable",
     ["star trek online"] = "Star Trek Online",
     ["star_trek_online"] = "Star Trek Online",
@@ -1743,6 +1761,7 @@ local GAME_DATABASE = {
     ["theescapists2"] = "The Escapists 2",
     ["theexit-win64-shipping"] = "DEATHGARDEN",
     ["theforest"] = "The Forest",
+    ["thegreatcircle"] = "Indiana Jones and the Great Circle",
     ["thehuntercotw_f"] = "theHunter™: Call of the Wild",
     ["theinnerworld"] = "The Inner World",
     ["thelab"] = "The Lab",
@@ -1947,6 +1966,7 @@ local GAME_DATABASE = {
     ["wreckfest"] = "Next Car Game: Wreckfest",
     ["wreckfest_x64"] = "Wreckfest",
     ["wulverblade"] = "Wulverblade",
+    ["wuthering waves"] = "Wuthering Waves",
     ["ww2"] = "World War II Online",
     ["wwe2k18_x64"] = "WWE 2K18",
     ["wz2100"] = "Warzone 2100",
@@ -1956,6 +1976,7 @@ local GAME_DATABASE = {
     ["xcomew"] = "XCOM: Enemy Unknown",
     ["xcomew.exe"] = "XCOM Enemy Within",
     ["xcomgame"] = "XCOM: Enemy Unknown",
+    ["xdefiant"] = "XDefiant",
     ["xenonracer"] = "Xenon Racer",
     ["xenonracer-win64-shipping"] = "Xenon Racer",
     ["xgamefinal"] = "Halo Wars: Definitive Edition",
@@ -1971,13 +1992,13 @@ local GAME_DATABASE = {
     ["youtuberslife"] = "Youtubers Life",
     ["yugioh"] = "Yu-Gi-Oh! Legacy of the Duelist",
     ["zandronum"] = "Zandronum",
+    ["zenlesszonezero"] = "Zenless Zone Zero",
     ["zenoclash"] = "Zeno Clash",
     ["zombi"] = "Zombi",
     ["zombidle"] = "Zombidle: REMONSTERED",
     ["zps"] = "Zombie Panic! Source",
     ["蒼の彼方のフォーリズム"] = "Ao no Kanata no Four Rhythm",
-    ["HorizonForbiddenWest"] = "Horizon Forbidde West",
-    ["Icarus-Win64-Shipping"] = "Icarus",
+
 }
 
 -- ============================================================================
@@ -2097,6 +2118,15 @@ local GAME_NAMES = {
     ["stellaris"] = "Stellaris",
     ["civ6"] = "Civilization VI",
     ["totalwar"] = "Total War",
+
+    -- Riot Games
+    ["valorant"] = "Valorant",
+
+    -- Embark Studios
+    ["discovery"] = "THE FINALS",
+    ["discovery-d"] = "THE FINALS",
+    ["discovery-e"] = "THE FINALS",
+    ["pioneergame"] = "ARC Raiders",
 }
 
 -- ============================================================================
@@ -2731,6 +2761,7 @@ ffi.cdef[[
     DWORD GetModuleBaseNameA(HANDLE hProcess, void* hModule, char* lpBaseName, DWORD nSize);
     int GetWindowTextA(HWND hWnd, char* lpString, int nMaxCount);
     int GetWindowTextW(HWND hWnd, wchar_t* lpString, int nMaxCount);
+    BOOL QueryFullProcessImageNameA(HANDLE hProcess, DWORD dwFlags, char* lpExeName, DWORD* lpdwSize);
 
     int MultiByteToWideChar(unsigned int CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
     int WideCharToMultiByte(unsigned int CodePage, DWORD dwFlags, const wchar_t* lpWideCharStr, int cchWideChar, char* lpMultiByteStr, int cbMultiByte, const char* lpDefaultChar, int* lpUsedDefaultChar);
@@ -2849,6 +2880,7 @@ local shell32 = nil
 pcall(function() shell32 = ffi.load("shell32") end)
 
 local PROCESS_QUERY_INFORMATION = 0x0400
+local PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 local PROCESS_VM_READ = 0x0010
 local CP_UTF8 = 65001
 local MAX_PATH = 260
@@ -3624,20 +3656,39 @@ local function get_active_process()
         local get_ok, len = pcall(function()
             return psapi.GetModuleBaseNameA(process, nil, buffer, 260)
         end)
-
-        -- Always close handle, even if GetModuleBaseNameA failed
+        
+        -- Safe close for first attempt
         kernel32.CloseHandle(process)
 
-        -- Check if GetModuleBaseNameA succeeded
-        if not get_ok or not len or len <= 0 then
-            return nil
+        if get_ok and len and len > 0 then
+            -- Safely extract string with explicit length limit
+            if len > 259 then len = 259 end
+            local name = ffi.string(buffer, len)
+            return string.gsub(name, "%.[eE][xX][eE]$", "")
         end
-
-        -- Safely extract string with explicit length limit
-        if len > 259 then len = 259 end
-        local name = ffi.string(buffer, len)
-
-        return string.gsub(name, "%.[eE][xX][eE]$", "")
+        
+        -- FALLBACK: Try QueryFullProcessImageNameA with PROCESS_QUERY_LIMITED_INFORMATION
+        -- This is needed for games with stricter anti-cheat (ARC Raiders, THE FINALS, etc.)
+        -- that block PROCESS_VM_READ
+        
+        local process_fallback = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid[0])
+        if is_invalid_handle(process_fallback) then return nil end
+        
+        local fallback_ok, fallback_result = pcall(function()
+            local size = ffi.new("DWORD[1]", 260)
+            local res = kernel32.QueryFullProcessImageNameA(process_fallback, 0, buffer, size)
+            if res ~= 0 and size[0] > 0 then
+                local full_path = ffi.string(buffer, size[0])
+                -- Extract filename from full path
+                local name = string.match(full_path, "([^/\\]+)$") or full_path
+                return string.gsub(name, "%.[eE][xX][eE]$", "")
+            end
+            return nil
+        end)
+        
+        kernel32.CloseHandle(process_fallback)
+        
+        return fallback_ok and fallback_result or nil
     end)
 
     return ok and result or nil
@@ -5114,7 +5165,7 @@ function script_load(settings)
         for _ in pairs(GAME_DATABASE) do db_count = db_count + 1 end
     end
 
-    log("Smart Replay Mover v2.7.5 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.7.6 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
     log("Database: " .. db_count .. " games | Custom: " .. custom_count .. " mappings")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
@@ -5166,7 +5217,7 @@ function script_unload()
 end
 
 -- ============================================================================
--- END OF SCRIPT v2.7.5
+-- END OF SCRIPT v2.7.6
 -- Copyright (C) 2025-2026 SlonickLab - Licensed under GPL v3
 -- https://github.com/SlonickLab/Smart-Replay-Mover
 -- ============================================================================
