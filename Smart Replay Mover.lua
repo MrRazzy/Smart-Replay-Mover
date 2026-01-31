@@ -1,7 +1,7 @@
--- Smart Replay Mover v2.7.6
+-- Smart Replay Mover v2.7.7
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
-local VERSION = "2.7.6"
+local VERSION = "2.7.7"
 local GITHUB_RAW_URL = "https://raw.githubusercontent.com/SlonickLab/Smart-Replay-Mover/main/Smart%20Replay%20Mover.lua"
 local GITHUB_RELEASES_URL = "https://github.com/SlonickLab/Smart-Replay-Mover/releases"
 --
@@ -32,6 +32,12 @@ local GITHUB_RELEASES_URL = "https://github.com/SlonickLab/Smart-Replay-Mover/re
 -- Plagiarism or removal of this notice violates the license terms.
 --
 -- ============================================================================
+-- CHANGELOG v2.7.7:
+--   - Added Notification Scaling (100-300%) for 4K/HiDPI monitors
+--   - Added "Test Notification" button to settings
+--   - Added "Use Quiet Sound" option (switches to notification_sound_silent.wav)
+--   - Improved Notification Window drawing with dynamic scaling
+--
 -- CHANGELOG v2.7.6:
 --   - Critical: Fixed detection for games with Anti-Cheat (ARC Raiders, THE FINALS)
 --   - Added fallback to QueryFullProcessImageNameA when OpenProcess is blocked
@@ -2998,6 +3004,7 @@ local notification_timer_should_stop = false
 local notification_bg_brush = nil       -- Global background brush
 local cached_title_font = nil           -- Cached font for title
 local cached_msg_font = nil             -- Cached font for message
+local last_font_scale = 100             -- Track scale changes to rebuild fonts
 
 -- Check if app is in exclusive fullscreen mode
 local function is_exclusive_fullscreen()
@@ -3063,16 +3070,25 @@ end
 
 -- Ensure fonts are created (cached)
 local function ensure_fonts()
+    -- Rebuild fonts if scale changed
+    if last_font_scale ~= CONFIG.notification_scale then
+        if cached_title_font then gdi32.DeleteObject(cached_title_font); cached_title_font = nil end
+        if cached_msg_font then gdi32.DeleteObject(cached_msg_font); cached_msg_font = nil end
+        last_font_scale = CONFIG.notification_scale
+    end
+
+    local scale_factor = CONFIG.notification_scale / 100.0
+
     if cached_title_font == nil then
         cached_title_font = gdi32.CreateFontA(
-            -15, 0, 0, 0, FW_BOLD, 0, 0, 0,
+            math.floor(-15 * scale_factor), 0, 0, 0, FW_BOLD, 0, 0, 0,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI"
         )
     end
     if cached_msg_font == nil then
         cached_msg_font = gdi32.CreateFontA(
-            -13, 0, 0, 0, 400, 0, 0, 0,
+            math.floor(-13 * scale_factor), 0, 0, 0, 400, 0, 0, 0,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI"
         )
@@ -3099,6 +3115,8 @@ local function draw_notification_to_hdc(hdc, hwnd)
         gdi32.DeleteObject(accent_brush)
     end
 
+    local scale_factor = CONFIG.notification_scale / 100.0
+
     ensure_fonts()
     if cached_title_font == nil then return end
 
@@ -3109,12 +3127,20 @@ local function draw_notification_to_hdc(hdc, hwnd)
     local safe_title = notification_title or "Notification"
     if safe_title == "" then safe_title = "Notification" end
 
-    local title_rect = ffi.new("RECT", {12, 10, rect.right - 10, 30})
+    -- Scale drawing coordinates
+    local title_x = math.floor(12 * scale_factor)
+    local title_y = math.floor(10 * scale_factor)
+    local title_h = math.floor(30 * scale_factor)
+    
+    -- DT_CENTER (1) + DT_VCENTER (4) + DT_SINGLELINE (32) = 37
+    local text_flags = 37 
+    
+    local title_rect = ffi.new("RECT", {title_x, title_y, rect.right - math.floor(10 * scale_factor), title_y + title_h})
     local title_wide = utf8_to_wide(safe_title)
     if title_wide then
-        user32.DrawTextW(hdc, title_wide, -1, title_rect, 0)
+        user32.DrawTextW(hdc, title_wide, -1, title_rect, text_flags)
     else
-        user32.DrawTextA(hdc, safe_title, -1, title_rect, 0)
+        user32.DrawTextA(hdc, safe_title, -1, title_rect, text_flags)
     end
 
     if cached_msg_font ~= nil then
@@ -3123,12 +3149,13 @@ local function draw_notification_to_hdc(hdc, hwnd)
 
         local safe_message = notification_message or ""
 
-        local msg_rect = ffi.new("RECT", {12, 34, rect.right - 10, rect.bottom - 8})
+        local msg_y = math.floor(34 * scale_factor)
+        local msg_rect = ffi.new("RECT", {math.floor(12 * scale_factor), msg_y, rect.right - math.floor(10 * scale_factor), rect.bottom - math.floor(8 * scale_factor)})
         local msg_wide = utf8_to_wide(safe_message)
         if msg_wide then
-            user32.DrawTextW(hdc, msg_wide, -1, msg_rect, 0)
+            user32.DrawTextW(hdc, msg_wide, -1, msg_rect, text_flags)
         elseif safe_message ~= "" then
-            user32.DrawTextA(hdc, safe_message, -1, msg_rect, 0)
+            user32.DrawTextA(hdc, safe_message, -1, msg_rect, text_flags)
         end
     end
 
@@ -3350,9 +3377,14 @@ local function show_notification(title, message)
         if needs_create then
             destroy_orphaned_notifications()
 
+            local scale_factor = CONFIG.notification_scale / 100.0
+            local scaled_width = math.floor(NOTIFICATION_WIDTH * scale_factor)
+            local scaled_height = math.floor(NOTIFICATION_HEIGHT * scale_factor)
+            local scaled_margin = math.floor(NOTIFICATION_MARGIN * scale_factor)
+
             local screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
-            local x = screen_width - NOTIFICATION_WIDTH - NOTIFICATION_MARGIN
-            local y = NOTIFICATION_MARGIN
+            local x = screen_width - scaled_width - scaled_margin
+            local y = scaled_margin
 
             local ex_style = WS_EX_TOPMOST + WS_EX_TOOLWINDOW + WS_EX_NOACTIVATE + WS_EX_LAYERED + WS_EX_TRANSPARENT
 
@@ -3362,7 +3394,7 @@ local function show_notification(title, message)
                 NOTIFICATION_WINDOW_TITLE,
                 WS_POPUP,
                 x, y,
-                NOTIFICATION_WIDTH, NOTIFICATION_HEIGHT,
+                scaled_width, scaled_height,
                 nil, nil,
                 notification_hinstance,
                 nil
@@ -3372,9 +3404,24 @@ local function show_notification(title, message)
                 dbg("CreateWindowExA failed")
                 return
             end
-            dbg("New notification window created (Reuse initialized)")
+            dbg("New notification window created (Reuse initialized) at scale " .. CONFIG.notification_scale .. "%")
         else
+            -- If scale changes but window is reused, we might need to recreate it. 
+            -- But for now, we assume users won't change scale mid-session often. 
+            -- To be safe, we could destroy and recreate if size differs, but reuse is prioritized for stability.
+            -- If needed, user can reload script to force resize.
             dbg("Reusing existing notification window")
+            
+            -- Optional: Position update if resolution changed or scale changed
+            local scale_factor = CONFIG.notification_scale / 100.0
+            local scaled_width = math.floor(NOTIFICATION_WIDTH * scale_factor)
+            local scaled_height = math.floor(NOTIFICATION_HEIGHT * scale_factor)
+            local scaled_margin = math.floor(NOTIFICATION_MARGIN * scale_factor)
+            local screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
+            local x = screen_width - scaled_width - scaled_margin
+            local y = scaled_margin
+            
+            user32.SetWindowPos(notification_hwnd, nil, x, y, scaled_width, scaled_height, 0x0010 + 0x0004) -- SWP_NOACTIVATE + SWP_NOZORDER
         end
 
         user32.SetLayeredWindowAttributes(notification_hwnd, 0, 0, LWA_ALPHA)
@@ -3401,8 +3448,13 @@ local function play_notification_sound()
 
     pcall(function()
         if SCRIPT_DIR and SCRIPT_DIR ~= "" then
-            local sound_file = SCRIPT_DIR .. "notification_sound.wav"
-            local result = winmm.PlaySoundA(sound_file, nil, SND_FILENAME + SND_ASYNC + SND_NODEFAULT)
+            local sound_file = "notification_sound.wav"
+            if CONFIG.use_quiet_sound then
+                sound_file = "notification_sound_silent.wav"
+            end
+            
+            local full_path = SCRIPT_DIR .. sound_file
+            local result = winmm.PlaySoundA(full_path, nil, SND_FILENAME + SND_ASYNC + SND_NODEFAULT)
             if result ~= 0 then
                 dbg("Playing custom sound: " .. sound_file)
                 return
@@ -4745,6 +4797,11 @@ local function on_import_clicked(props, p)
     return true
 end
 
+local function on_test_notification_clicked(props, p)
+    notify("Test Notification", "This is a test message to check size and sound.")
+    return false
+end
+
 -- ============================================================================
 -- OBS INTERFACE
 -- ============================================================================
@@ -4784,6 +4841,47 @@ Made by <b>SlonickLab</b> • <a href="https://github.com/SlonickLab/Smart-Repla
 ]]
 end
 
+-- Helper function to compare semantic versions
+-- Returns true if new > old
+local function compare_versions(new, old)
+    local new_m, new_n, new_p = new:match("(%d+)%.(%d+)%.?(%d*)")
+    local old_m, old_n, old_p = old:match("(%d+)%.(%d+)%.?(%d*)")
+    new_m, new_n, new_p = tonumber(new_m or 0), tonumber(new_n or 0), tonumber(new_p or 0)
+    old_m, old_n, old_p = tonumber(old_m or 0), tonumber(old_n or 0), tonumber(old_p or 0)
+    
+    if new_m > old_m then return true end
+    if new_m < old_m then return false end
+    if new_n > old_n then return true end
+    if new_n < old_n then return false end
+    return new_p > old_p
+end
+
+-- Helper function to read configuration from settings
+local function read_config(settings)
+    script_settings = settings
+
+    CONFIG.add_game_prefix = obs.obs_data_get_bool(settings, "add_game_prefix")
+    CONFIG.organize_screenshots = obs.obs_data_get_bool(settings, "organize_screenshots")
+    CONFIG.organize_recordings = obs.obs_data_get_bool(settings, "organize_recordings")
+    CONFIG.use_date_subfolders = obs.obs_data_get_bool(settings, "use_date_subfolders")
+    CONFIG.fallback_folder = obs.obs_data_get_string(settings, "fallback_folder")
+    CONFIG.duplicate_cooldown = obs.obs_data_get_double(settings, "duplicate_cooldown")
+    CONFIG.delete_spam_files = obs.obs_data_get_bool(settings, "delete_spam_files")
+    CONFIG.debug_mode = obs.obs_data_get_bool(settings, "debug_mode")
+    CONFIG.show_notifications = obs.obs_data_get_bool(settings, "show_notifications")
+    CONFIG.play_sound = obs.obs_data_get_bool(settings, "play_sound")
+    CONFIG.notification_scale = math.floor(obs.obs_data_get_double(settings, "notification_scale"))
+    CONFIG.use_quiet_sound = obs.obs_data_get_bool(settings, "use_quiet_sound")
+    CONFIG.notification_duration = obs.obs_data_get_double(settings, "notification_duration")
+    CONFIG.enable_thumbnails = obs.obs_data_get_bool(settings, "enable_thumbnails")
+    CONFIG.thumbnail_offset = obs.obs_data_get_double(settings, "thumbnail_offset")
+    CONFIG.ffmpeg_path = obs.obs_data_get_string(settings, "ffmpeg_path")
+
+    if CONFIG.fallback_folder == "" then
+        CONFIG.fallback_folder = "Desktop"
+    end
+end
+
 -- Parse result of startup auto-update check
 local function parse_startup_update_result()
     obs.timer_remove(parse_startup_update_result)
@@ -4806,21 +4904,9 @@ local function parse_startup_update_result()
         if latest_version then
             latest_version = latest_version:gsub("^%s*(.-)%s*$", "%1")
             
-            local function is_newer(new, old)
-                local new_m, new_n, new_p = new:match("(%d+)%.(%d+)%.?(%d*)")
-                local old_m, old_n, old_p = old:match("(%d+)%.(%d+)%.?(%d*)")
-                new_m, new_n, new_p = tonumber(new_m or 0), tonumber(new_n or 0), tonumber(new_p or 0)
-                old_m, old_n, old_p = tonumber(old_m or 0), tonumber(old_n or 0), tonumber(old_p or 0)
-                if new_m > old_m then return true end
-                if new_m < old_m then return false end
-                if new_n > old_n then return true end
-                if new_n < old_n then return false end
-                return new_p > old_p
-            end
-            
             if latest_version == VERSION then
                 startup_update_status = "✅ Up to date (v" .. VERSION .. ")"
-            elseif is_newer(latest_version, VERSION) then
+            elseif compare_versions(latest_version, VERSION) then
                 startup_update_status = "🆕 New version available: v" .. latest_version
             else
                 startup_update_status = "✅ Dev version (v" .. VERSION .. ")"
@@ -4889,21 +4975,9 @@ local function parse_update_result()
             latest_version = latest_version:gsub("^%s*(.-)%s*$", "%1")
             
             -- Compare the latest version from GitHub with the current script version.
-            local function is_newer(new, old)
-                local new_m, new_n, new_p = new:match("(%d+)%.(%d+)%.?(%d*)")
-                local old_m, old_n, old_p = old:match("(%d+)%.(%d+)%.?(%d*)")
-                new_m, new_n, new_p = tonumber(new_m or 0), tonumber(new_n or 0), tonumber(new_p or 0)
-                old_m, old_n, old_p = tonumber(old_m or 0), tonumber(old_n or 0), tonumber(old_p or 0)
-                if new_m > old_m then return true end
-                if new_m < old_m then return false end
-                if new_n > old_n then return true end
-                if new_n < old_n then return false end
-                return new_p > old_p
-            end
-
             if latest_version == VERSION then
                 update_status_msg = "✅ You are up to date (v" .. VERSION .. ")"
-            elseif is_newer(latest_version, VERSION) then
+            elseif compare_versions(latest_version, VERSION) then
                 update_status_msg = "🎁 New update: v" .. latest_version .. "!"
             else
                 -- This case handles when the local version is newer than the one on GitHub,
@@ -5057,7 +5131,15 @@ function script_properties()
     obs.obs_properties_add_text(notify_group, "notify_help", "Visual popup works only in Borderless Windowed games!", obs.OBS_TEXT_INFO)
     obs.obs_properties_add_bool(notify_group, "show_notifications", "🖼️  Show visual popup (Borderless Windowed only)")
     obs.obs_properties_add_bool(notify_group, "play_sound", "🔊  Play notification sound (works in Fullscreen too)")
+    
+    local p_scale = obs.obs_properties_add_float_slider(notify_group, "notification_scale", "📏  Scale %", 100.0, 300.0, 10.0)
+    
+    obs.obs_properties_add_bool(notify_group, "use_quiet_sound", "🔇  Use Quiet Sound (notification_sound_silent.wav)")
+
     obs.obs_properties_add_float_slider(notify_group, "notification_duration", "⏱️  Popup duration (seconds)", 1.0, 10.0, 0.5)
+    
+    obs.obs_properties_add_button(notify_group, "test_notification_btn", "🔊  Test Notification", on_test_notification_clicked)
+    
     obs.obs_properties_add_group(props, "notify_section", "🔔  NOTIFICATIONS", obs.OBS_GROUP_NORMAL, notify_group)
 
     -- TOOLS GROUP
@@ -5087,6 +5169,8 @@ function script_defaults(settings)
     obs.obs_data_set_default_bool(settings, "debug_mode", false)
     obs.obs_data_set_default_bool(settings, "show_notifications", true)
     obs.obs_data_set_default_bool(settings, "play_sound", false)
+    obs.obs_data_set_default_double(settings, "notification_scale", 100.0)
+    obs.obs_data_set_default_bool(settings, "use_quiet_sound", false)
     obs.obs_data_set_default_double(settings, "notification_duration", 3.0)
     obs.obs_data_set_default_bool(settings, "enable_thumbnails", false)
     obs.obs_data_set_default_double(settings, "thumbnail_offset", 10.0)
@@ -5094,27 +5178,8 @@ function script_defaults(settings)
 end
 
 function script_update(settings)
-    script_settings = settings
-
-    CONFIG.add_game_prefix = obs.obs_data_get_bool(settings, "add_game_prefix")
-    CONFIG.organize_screenshots = obs.obs_data_get_bool(settings, "organize_screenshots")
-    CONFIG.organize_recordings = obs.obs_data_get_bool(settings, "organize_recordings")
-    CONFIG.use_date_subfolders = obs.obs_data_get_bool(settings, "use_date_subfolders")
-    CONFIG.fallback_folder = obs.obs_data_get_string(settings, "fallback_folder")
-    CONFIG.duplicate_cooldown = obs.obs_data_get_double(settings, "duplicate_cooldown")
-    CONFIG.delete_spam_files = obs.obs_data_get_bool(settings, "delete_spam_files")
-    CONFIG.debug_mode = obs.obs_data_get_bool(settings, "debug_mode")
-    CONFIG.show_notifications = obs.obs_data_get_bool(settings, "show_notifications")
-    CONFIG.play_sound = obs.obs_data_get_bool(settings, "play_sound")
-    CONFIG.notification_duration = obs.obs_data_get_double(settings, "notification_duration")
-    CONFIG.enable_thumbnails = obs.obs_data_get_bool(settings, "enable_thumbnails")
-    CONFIG.thumbnail_offset = obs.obs_data_get_double(settings, "thumbnail_offset")
-    CONFIG.ffmpeg_path = obs.obs_data_get_string(settings, "ffmpeg_path")
-
-    if CONFIG.fallback_folder == "" then
-        CONFIG.fallback_folder = "Desktop"
-    end
-
+    read_config(settings)
+    
     load_custom_names(settings)
 
     local exact_count = 0
@@ -5130,26 +5195,7 @@ end
 function script_load(settings)
     destroy_orphaned_notifications()
 
-    script_settings = settings
-
-    CONFIG.add_game_prefix = obs.obs_data_get_bool(settings, "add_game_prefix")
-    CONFIG.organize_screenshots = obs.obs_data_get_bool(settings, "organize_screenshots")
-    CONFIG.organize_recordings = obs.obs_data_get_bool(settings, "organize_recordings")
-    CONFIG.use_date_subfolders = obs.obs_data_get_bool(settings, "use_date_subfolders")
-    CONFIG.fallback_folder = obs.obs_data_get_string(settings, "fallback_folder")
-    CONFIG.duplicate_cooldown = obs.obs_data_get_double(settings, "duplicate_cooldown")
-    CONFIG.delete_spam_files = obs.obs_data_get_bool(settings, "delete_spam_files")
-    CONFIG.debug_mode = obs.obs_data_get_bool(settings, "debug_mode")
-    CONFIG.show_notifications = obs.obs_data_get_bool(settings, "show_notifications")
-    CONFIG.play_sound = obs.obs_data_get_bool(settings, "play_sound")
-    CONFIG.notification_duration = obs.obs_data_get_double(settings, "notification_duration")
-    CONFIG.enable_thumbnails = obs.obs_data_get_bool(settings, "enable_thumbnails")
-    CONFIG.thumbnail_offset = obs.obs_data_get_double(settings, "thumbnail_offset")
-    CONFIG.ffmpeg_path = obs.obs_data_get_string(settings, "ffmpeg_path")
-
-    if CONFIG.fallback_folder == "" then
-        CONFIG.fallback_folder = "Desktop"
-    end
+    read_config(settings)
 
     load_custom_names(settings)
 
@@ -5165,7 +5211,7 @@ function script_load(settings)
         for _ in pairs(GAME_DATABASE) do db_count = db_count + 1 end
     end
 
-    log("Smart Replay Mover v2.7.6 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.7.7 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
     log("Database: " .. db_count .. " games | Custom: " .. custom_count .. " mappings")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
@@ -5217,7 +5263,7 @@ function script_unload()
 end
 
 -- ============================================================================
--- END OF SCRIPT v2.7.6
+-- END OF SCRIPT v2.7.7
 -- Copyright (C) 2025-2026 SlonickLab - Licensed under GPL v3
 -- https://github.com/SlonickLab/Smart-Replay-Mover
 -- ============================================================================
