@@ -6,7 +6,7 @@
 
   **Automatically organize your Replay Buffer clips, Recordings, and Screenshots into game-specific folders.**
 
-  [![Version](https://img.shields.io/badge/version-2.7.6-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
+  [![Version](https://img.shields.io/badge/version-2.7.7-00d4aa.svg)](https://github.com/SlonickLab/Smart-Replay-Mover/releases)
   [![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)](LICENSE)
   [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)]()
   [![OBS](https://img.shields.io/badge/OBS-28.x+-302E31.svg)](https://obsproject.com/)
@@ -176,6 +176,17 @@
 
   5. Reload the script — done!
 
+  ### 🔇 Quiet Sound Option (v2.7.7+)
+  
+  If the standard sound is too loud, you can use a separate "quiet" sound file:
+  
+  1. Prepare a quieter sound file.
+  2. Name it `notification_sound_silent.wav`.
+  3. Place it in the same folder.
+  4. In script settings, check **"Use Quiet Sound"**.
+  
+  Now you can toggle between the Normal and Quiet versions instantly!
+
   ---
 
   ## 📂 Output Structure
@@ -250,10 +261,15 @@
 
   ## 📋 Changelog
   
+  ### v2.7.7
+  - **📏 Notification Scaling** — Resize popup (100-300%) for 4K/HiDPI monitors
+  - **🔊 Quiet Sound Option** — Toggle for alternative silent sound file
+  - **🔘 Test Button** — Preview notifications instantly from settings
+
   ### v2.7.6
   - **🛡️ Anti-Cheat Compatibility** — Fixed detection for protected games (ARC Raiders, THE FINALS) using advanced API fallback
   - **🎮 445+ New Games** — Massive database expansion from Discord's game list and community sources
-  - **📈 1,900+ Games** — Total database now covers over 1,900 games
+  - **📈 2,300+ Games** — Total database now covers over 1,900 games
 
   ### v2.7.5
   - **🔄 Auto Update Check** — Script now checks for updates automatically on load
