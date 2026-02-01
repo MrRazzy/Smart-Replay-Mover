@@ -1,7 +1,7 @@
--- Smart Replay Mover v2.7.7
+-- Smart Replay Mover v2.7.8
 -- Simple, safe, and reliable replay buffer organizer for OBS
 -- ============================================================================
-local VERSION = "2.7.7"
+local VERSION = "2.7.8"
 local GITHUB_RAW_URL = "https://raw.githubusercontent.com/SlonickLab/Smart-Replay-Mover/main/Smart%20Replay%20Mover.lua"
 local GITHUB_RELEASES_URL = "https://github.com/SlonickLab/Smart-Replay-Mover/releases"
 --
@@ -32,6 +32,11 @@ local GITHUB_RELEASES_URL = "https://github.com/SlonickLab/Smart-Replay-Mover/re
 -- Plagiarism or removal of this notice violates the license terms.
 --
 -- ============================================================================
+-- CHANGELOG v2.7.8:
+--   - Added "Auto-restart Replay Buffer" option (prevents overlapping clips)
+--   - Implemented Event-Driven restart logic (safe & synchronous)
+--   - Added new "BUFFER CONTROL" settings section
+--
 -- CHANGELOG v2.7.7:
 --   - Added Notification Scaling (100-300%) for 4K/HiDPI monitors
 --   - Added "Test Notification" button to settings
@@ -110,7 +115,12 @@ local CONFIG = {
     enable_thumbnails = false,
     thumbnail_offset = 10.0,
     ffmpeg_path = "",
+    -- Buffer Control
+    restart_buffer_after_save = false,
 }
+
+-- State tracking for buffer restart
+local restarting_buffer_active = false
 
 local GAME_DATABASE = {
     ["000: dawn of war - dark crusade"] = "Warhammer 40",
@@ -4452,6 +4462,13 @@ local function delayed_recording_init()
     notify("Recording Started", "Game: " .. game_info)
 end
 
+
+local function start_buffer_delayed()
+    obs.timer_remove(start_buffer_delayed)
+    obs.obs_frontend_replay_buffer_start()
+    dbg("Replay Buffer auto-restarted")
+end 
+
 -- ============================================================================
 -- FRONTEND EVENT HANDLER
 -- ============================================================================
@@ -4483,6 +4500,13 @@ local function on_event(event)
                 process_file(path)
 
                 notify("Clip Saved", "Moved to: " .. folder_name)
+                
+                -- Auto-restart buffer logic (Prevent Overlap)
+                if CONFIG.restart_buffer_after_save then
+                    restarting_buffer_active = true
+                    obs.obs_frontend_replay_buffer_stop()
+                    dbg("Auto-restart: Buffer stopping...")
+                end
             end
 
         elseif event == obs.OBS_FRONTEND_EVENT_SCREENSHOT_TAKEN then
@@ -4544,6 +4568,13 @@ local function on_event(event)
                 log("Recording started - initialization scheduled in 0.5s...")
             end
 
+        elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED then
+            if restarting_buffer_active then
+                restarting_buffer_active = false
+                dbg("Auto-restart: Buffer stop confirmed. Restarting in 200ms...")
+                obs.timer_add(start_buffer_delayed, 200)
+            end
+            
         elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED then
             if CONFIG.organize_recordings then
                 obs.timer_remove(delayed_recording_init)
@@ -4876,6 +4907,7 @@ local function read_config(settings)
     CONFIG.enable_thumbnails = obs.obs_data_get_bool(settings, "enable_thumbnails")
     CONFIG.thumbnail_offset = obs.obs_data_get_double(settings, "thumbnail_offset")
     CONFIG.ffmpeg_path = obs.obs_data_get_string(settings, "ffmpeg_path")
+    CONFIG.restart_buffer_after_save = obs.obs_data_get_bool(settings, "restart_buffer_after_save")
 
     if CONFIG.fallback_folder == "" then
         CONFIG.fallback_folder = "Desktop"
@@ -5113,6 +5145,11 @@ function script_properties()
     obs.obs_properties_add_button(backup_group, "export_btn", "📤  Export", on_export_clicked)
     obs.obs_properties_add_group(props, "backup_section", "💾  BACKUP", obs.OBS_GROUP_NORMAL, backup_group)
 
+    -- BUFFER CONTROL GROUP
+    local buffer_group = obs.obs_properties_create()
+    obs.obs_properties_add_bool(buffer_group, "restart_buffer_after_save", "🔄  Auto-restart Replay Buffer after save (Prevent Overlap)")
+    obs.obs_properties_add_group(props, "buffer_section", "🔄  BUFFER CONTROL", obs.OBS_GROUP_NORMAL, buffer_group)
+
     -- ORGANIZATION GROUP
     local folder_group = obs.obs_properties_create()
     obs.obs_properties_add_bool(folder_group, "use_date_subfolders", "📅  Create monthly subfolders (YYYY-MM)")
@@ -5175,6 +5212,7 @@ function script_defaults(settings)
     obs.obs_data_set_default_bool(settings, "enable_thumbnails", false)
     obs.obs_data_set_default_double(settings, "thumbnail_offset", 10.0)
     obs.obs_data_set_default_string(settings, "ffmpeg_path", "")
+    obs.obs_data_set_default_bool(settings, "restart_buffer_after_save", false)
 end
 
 function script_update(settings)
@@ -5211,7 +5249,7 @@ function script_load(settings)
         for _ in pairs(GAME_DATABASE) do db_count = db_count + 1 end
     end
 
-    log("Smart Replay Mover v2.7.7 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
+    log("Smart Replay Mover v2.7.8 loaded (GPL v3 - github.com/SlonickLab/Smart-Replay-Mover)")
     log("Database: " .. db_count .. " games | Custom: " .. custom_count .. " mappings")
     log("Prefix: " .. (CONFIG.add_game_prefix and "ON" or "OFF") ..
         " | Recordings: " .. (CONFIG.organize_recordings and "ON" or "OFF") ..
@@ -5263,7 +5301,7 @@ function script_unload()
 end
 
 -- ============================================================================
--- END OF SCRIPT v2.7.7
+-- END OF SCRIPT v2.7.8
 -- Copyright (C) 2025-2026 SlonickLab - Licensed under GPL v3
 -- https://github.com/SlonickLab/Smart-Replay-Mover
 -- ============================================================================
