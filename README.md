@@ -213,6 +213,22 @@
 
   ## ❓ Troubleshooting
 
+  ### 🛑 Nothing happens when I test?
+  
+  **IMPORTANT:** The script detects the **Active Window** (what you are currently looking at).
+  
+  - If you Alt-Tab to OBS to change settings -> The script sees "OBS Studio".
+  - Since OBS is in the ignores list, the script does nothing.
+  
+  **How to Test Properly:**
+  1. Set up your Custom Names.
+  2. **Alt-Tab back into the game.**
+  3. Wait 3-5 seconds.
+  4. Save a Replay.
+  5. Check the folder.
+
+  ---
+
   ### Clips save to "Desktop" instead of game folder?
 
   Some games with **anti-cheat protection** (Easy Anti-Cheat, Vanguard, etc.) block the script from reading the process name. If the game isn't in our built-in list, it will fall back to "Desktop".
@@ -226,13 +242,20 @@
   3. Click **Add**
 
   **Examples:**
-  | Game | Folder |
-  |------|--------|
-  | `*Sea of Thieves*` | `Sea of Thieves` |
-  | `*New World*` | `New World` |
-  | `*PUBG*` | `PUBG` |
+  | Game | Folder | Type |
+  |------|--------|------|
+  | `*Sea of Thieves*` | Sea of Thieves | Matches Window Title |
+  | `*New World*` | New World | Matches Window Title |
+  | `*PUBG*` | PUBG | Matches Window Title |
 
-  > 💡 The `*pattern*` mode matches the window title, which works even when anti-cheat blocks process detection!
+  > 💡 **CRITICAL TIP:** When using `*pattern*`, you are matching the **WINDOW TITLE**, not the .exe name!
+  > 
+  > - ❌ `*cs2*` -> Won't work because the window is named "Counter-Strike 2" (doesn't contain "cs2").
+  > - ✅ `*Counter-Strike*` -> Works perfectly!
+  > - ❌ `*FactoryGamesteam*` -> Won't work because window is named "Satisfactory".
+  > - ✅ `*Satisfactory*` -> Works perfectly!
+
+  The `*pattern*` mode matches the window title, which works even when anti-cheat blocks process detection!
 
   ---
 
